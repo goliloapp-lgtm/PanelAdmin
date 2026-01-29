@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getDatabase, ref, onValue } from 'firebase/database';
+import { getFirestore, doc, getDoc } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
 import {
     Typography, Box,
@@ -16,6 +17,8 @@ import {
 } from '@mui/material';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import EditRiderModal from './EditRiderModal'; 
+import EditDriverModal from './EditDriverModal';
+import { Driver } from './Riders'; 
 
 export interface Rider {
     driverId: string;
@@ -41,6 +44,8 @@ const ListRiders = () => {
     const [loading, setLoading] = useState(true);
     const [selectedRider, setSelectedRider] = useState<Rider | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedDriverDetail, setSelectedDriverDetail] = useState<Driver | null>(null);
+    const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<keyof Rider>('driverName');
     const [page, setPage] = useState(0);
@@ -54,6 +59,32 @@ const ListRiders = () => {
     const handleCloseModal = () => {
         setSelectedRider(null);
         setIsModalOpen(false);
+    };
+
+    const handleRiderNameClick = async (riderId: string) => {
+        setLoading(true);
+        try {
+            const db = getFirestore(firebaseApp);
+            const docRef = doc(db, "drivers", riderId);
+            const docSnap = await getDoc(docRef);
+
+            if (docSnap.exists()) {
+                const driverData = { uid: docSnap.id, ...docSnap.data() } as Driver;
+                setSelectedDriverDetail(driverData);
+                setIsDetailModalOpen(true);
+            } else {
+                console.log("No such document!");
+            }
+        } catch (error) {
+            console.error("Error fetching driver details:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleCloseDetailModal = () => {
+        setSelectedDriverDetail(null);
+        setIsDetailModalOpen(false);
     };
 
     const handleRequestSort = (property: keyof Rider) => {
@@ -200,7 +231,12 @@ const ListRiders = () => {
                                         <Avatar src={rider.profilePhoto} alt={rider.driverName} />
                                     </TableCell>
                                     <TableCell>
-                                        <Typography variant="subtitle2" fontWeight={600}>
+                                        <Typography 
+                                            variant="subtitle2" 
+                                            fontWeight={600}
+                                            sx={{ cursor: 'pointer', textDecoration: 'underline', color: 'primary.main' }}
+                                            onClick={() => handleRiderNameClick(rider.driverId)}
+                                        >
                                             {rider.driverName}
                                         </Typography>
                                     </TableCell>
@@ -249,6 +285,14 @@ const ListRiders = () => {
                     onUpdate={() => {
                         // The real-time listener will handle the update, but we can keep this for future use
                     }}
+                />
+            )}
+            {selectedDriverDetail && (
+                <EditDriverModal
+                    open={isDetailModalOpen}
+                    onClose={handleCloseDetailModal}
+                    driver={selectedDriverDetail}
+                    readOnly={true}
                 />
             )}
         </>

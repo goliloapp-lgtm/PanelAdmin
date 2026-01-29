@@ -31,7 +31,8 @@ interface EditDriverModalProps {
   open: boolean;
   onClose: () => void;
   driver: Driver | null;
-  onUpdate: () => void;
+  onUpdate?: () => void;
+  readOnly?: boolean;
 }
 
 const validationSchema = Yup.object({
@@ -47,6 +48,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
   onClose,
   driver,
   onUpdate,
+  readOnly = false,
 }) => {
   const [userData, setUserData] = useState<UserData | null>(null);
 
@@ -75,7 +77,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
         isUserVerified: values.isUserVerified,
       };
       await updateDriver(driver.uid, dataToUpdate);
-      onUpdate();
+      if (onUpdate) onUpdate();
       onClose();
     } catch (error) {
       console.error("Error updating driver:", error);
@@ -86,7 +88,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     if (window.confirm("¿Estás seguro de que quieres eliminar este conductor?")) {
       try {
         await deleteDriver(driver.uid);
-        onUpdate();
+        if (onUpdate) onUpdate();
         onClose();
       } catch (error) {
         console.error("Error deleting driver:", error);
@@ -96,7 +98,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>Verificar Conductor</DialogTitle>
+      <DialogTitle>{readOnly ? "Información del Conductor" : "Verificar Conductor"}</DialogTitle>
       <Formik
         initialValues={driver}
         validationSchema={validationSchema}
@@ -174,6 +176,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.dniNumber && !!errors.dniNumber}
                       helperText={<ErrorMessage name="dniNumber" />}
+                      InputProps={{ readOnly: readOnly }}
                     />
                     <Field
                       name="licensePlate"
@@ -182,6 +185,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.licensePlate && !!errors.licensePlate}
                       helperText={<ErrorMessage name="licensePlate" />}
+                      InputProps={{ readOnly: readOnly }}
                     />
                     <Field
                       name="phoneNumber"
@@ -190,6 +194,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.phoneNumber && !!errors.phoneNumber}
                       helperText={<ErrorMessage name="phoneNumber" />}
+                      InputProps={{ readOnly: readOnly }}
                     />
                     <Field
                       name="vehicleBrand"
@@ -198,6 +203,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.vehicleBrand && !!errors.vehicleBrand}
                       helperText={<ErrorMessage name="vehicleBrand" />}
+                      InputProps={{ readOnly: readOnly }}
                     />
                     <Field
                       name="vehicleModel"
@@ -206,7 +212,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.vehicleModel && !!errors.vehicleModel}
                       helperText={<ErrorMessage name="vehicleModel" />}
+                      InputProps={{ readOnly: readOnly }}
                     />
+                    {!readOnly && (
                     <FormControlLabel
                       control={
                         <Switch
@@ -217,18 +225,23 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       }
                       label="Marcar como Verificado"
                     />
+                    )}
                   </Box>
                 </Grid>
               </Grid>
             </DialogContent>
             <DialogActions sx={{ p: 3 }}>
-              <Button onClick={onClose} variant="outlined">Cancelar</Button>
-              <Button color="error" onClick={handleDelete} variant="outlined">
-                Rechazar Conductor
-              </Button>
-              <Button type="submit" variant="contained" color="primary">
-                Guardar Cambios
-              </Button>
+              <Button onClick={onClose} variant="outlined">{readOnly ? "Cerrar" : "Cancelar"}</Button>
+              {!readOnly && (
+                <>
+                  <Button color="error" onClick={handleDelete} variant="outlined">
+                    Rechazar Conductor
+                  </Button>
+                  <Button type="submit" variant="contained" color="primary">
+                    Guardar Cambios
+                  </Button>
+                </>
+              )}
             </DialogActions>
           </Form>
         )}
