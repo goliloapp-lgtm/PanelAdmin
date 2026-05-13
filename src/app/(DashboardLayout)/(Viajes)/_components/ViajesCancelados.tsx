@@ -81,7 +81,7 @@ const ViajesCanceladosTable = () => {
             const processTrips = async () => {
                 if (data) {
                     const fetchedTrips: Trip[] = Object.values(data)
-                        .filter((trip: any) => trip.status === 'cancelled')
+                        .filter((trip: any) => trip.status === 'canceled' || trip.status === 'cancelled')
                         .map((trip: any) => ({
                             ...trip,
                         }));

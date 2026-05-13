@@ -20,6 +20,7 @@ import { updateDriver, deleteDriver } from "@/utils/driver";
 import { getUser } from "@/utils/user";
 import { Driver } from "./Riders";
 import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
 
 interface UserData {
   firstName?: string;
@@ -36,11 +37,11 @@ interface EditDriverModalProps {
 }
 
 const validationSchema = Yup.object({
-  dniNumber: Yup.string().required("El DNI es requerido"),
-  licensePlate: Yup.string().required("La placa es requerida"),
-  phoneNumber: Yup.string().required("El teléfono es requerido"),
-  vehicleBrand: Yup.string().required("La marca del vehículo es requerida"),
-  vehicleModel: Yup.string().required("El modelo del vehículo es requerido"),
+  dniNumber: Yup.string(),
+  licensePlate: Yup.string(),
+  phoneNumber: Yup.string(),
+  vehicleBrand: Yup.string(),
+  vehicleModel: Yup.string(),
 });
 
 const EditDriverModal: React.FC<EditDriverModalProps> = ({
@@ -69,18 +70,20 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
   const handleUpdate = async (values: Driver) => {
     try {
       const dataToUpdate: Partial<Driver> = {
-        dniNumber: values.dniNumber,
-        licensePlate: values.licensePlate,
-        phoneNumber: values.phoneNumber,
-        vehicleBrand: values.vehicleBrand,
-        vehicleModel: values.vehicleModel,
-        isUserVerified: values.isUserVerified,
+        dniNumber: values.dniNumber ?? "",
+        licensePlate: values.licensePlate ?? "",
+        phoneNumber: values.phoneNumber ?? "",
+        vehicleBrand: values.vehicleBrand ?? "",
+        vehicleModel: values.vehicleModel ?? "",
+        isUserVerified: values.isUserVerified ?? false,
       };
       await updateDriver(driver.uid, dataToUpdate);
+      toast.success("Cambios guardados correctamente");
       if (onUpdate) onUpdate();
       onClose();
     } catch (error) {
       console.error("Error updating driver:", error);
+      toast.error("Ocurrió un error al guardar los cambios");
     }
   };
 
@@ -88,10 +91,12 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     if (window.confirm("¿Estás seguro de que quieres eliminar este conductor?")) {
       try {
         await deleteDriver(driver.uid);
+        toast.success("Conductor eliminado");
         if (onUpdate) onUpdate();
         onClose();
       } catch (error) {
         console.error("Error deleting driver:", error);
+        toast.error("Ocurrió un error al eliminar el conductor");
       }
     }
   };
@@ -100,7 +105,15 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       <DialogTitle>{readOnly ? "Información del Conductor" : "Verificar Conductor"}</DialogTitle>
       <Formik
-        initialValues={driver}
+        initialValues={{
+          ...driver,
+          dniNumber: driver.dniNumber ?? "",
+          licensePlate: driver.licensePlate ?? "",
+          phoneNumber: driver.phoneNumber ?? "",
+          vehicleBrand: driver.vehicleBrand ?? "",
+          vehicleModel: driver.vehicleModel ?? "",
+          isUserVerified: driver.isUserVerified ?? false,
+        }}
         validationSchema={validationSchema}
         onSubmit={handleUpdate}
         enableReinitialize

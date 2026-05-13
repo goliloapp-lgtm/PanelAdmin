@@ -12,6 +12,7 @@ import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateUser, deleteUser } from "@/utils/user";
 import { Passenger } from "../../(Pasajeros)/_components/ListPassengers";
+import toast from "react-hot-toast";
 
 interface EditPassengerModalProps {
   open: boolean;
@@ -39,10 +40,12 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
   const handleUpdate = async (values: Passenger) => {
     try {
       await updateUser(passenger.id, values);
+      toast.success("Cambios guardados correctamente");
       onUpdate();
       onClose();
     } catch (error) {
       console.error("Error updating user:", error);
+      toast.error("Ocurrió un error al guardar los cambios");
     }
   };
 
@@ -50,10 +53,12 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
     if (window.confirm("¿Estás seguro de que quieres eliminar este usuario?")) {
       try {
         await deleteUser(passenger.id);
+        toast.success("Usuario eliminado");
         onUpdate();
         onClose();
       } catch (error) {
         console.error("Error deleting user:", error);
+        toast.error("Ocurrió un error al eliminar el usuario");
       }
     }
   };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getDatabase, ref, onValue } from 'firebase/database';
-import { getFirestore, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
 import {
     Typography, Box,
@@ -40,7 +40,9 @@ export interface Rider {
 type Order = 'asc' | 'desc';
 
 const ListRiders = () => {
-    const [riders, setRiders] = useState<Rider[]>([]);
+    const [verifiedDrivers, setVerifiedDrivers] = useState<Driver[]>([]);
+    const [usersDict, setUsersDict] = useState<Record<string, any>>({});
+    const [activeRidersDict, setActiveRidersDict] = useState<Record<string, any>>({});
     const [loading, setLoading] = useState(true);
     const [selectedRider, setSelectedRider] = useState<Rider | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -102,31 +104,104 @@ const ListRiders = () => {
         setPage(0);
     };
 
+    const fetchFirestoreData = async () => {
+        setLoading(true);
+        try {
+            const db = getFirestore(firebaseApp);
+            const driversQ = query(collection(db, "drivers"), where("isUserVerified", "==", true));
+            const driverSnap = await getDocs(driversQ);
+            
+            const fetchedDrivers: Driver[] = [];
+            const userPromises: Promise<any>[] = [];
+
+            driverSnap.forEach((docSnap) => {
+                const driverData = { uid: docSnap.id, ...docSnap.data() } as Driver;
+                fetchedDrivers.push(driverData);
+                if (driverData.userId) {
+                    userPromises.push(getDoc(doc(db, "users", driverData.userId)));
+                } else {
+                    userPromises.push(Promise.resolve(null));
+                }
+            });
+
+            const userSnaps = await Promise.all(userPromises);
+            const newUsersDict: Record<string, any> = {};
+            
+            fetchedDrivers.forEach((driver, index) => {
+                const uSnap = userSnaps[index];
+                if (uSnap && uSnap.exists()) {
+                    newUsersDict[driver.userId] = uSnap.data();
+                }
+            });
+
+            setVerifiedDrivers(fetchedDrivers);
+            setUsersDict(newUsersDict);
+        } catch (error) {
+            console.error("Error fetching Firestore data:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchFirestoreData();
+    }, []);
+
     useEffect(() => {
         const db = getDatabase(firebaseApp);
         const ridersRef = ref(db, 'conductores_activos');
 
         const unsubscribe = onValue(ridersRef, (snapshot) => {
-            setLoading(true);
             const data = snapshot.val();
             if (data) {
-                const fetchedRiders: Rider[] = Object.keys(data).map(key => ({
-                    ...data[key],
-                    driverId: key
-                }));
-                setRiders(fetchedRiders);
+                setActiveRidersDict(data);
             } else {
-                setRiders([]);
+                setActiveRidersDict({});
             }
-            setLoading(false);
         }, (error) => {
-            console.error("Error fetching riders:", error);
-            setLoading(false);
+            console.error("Error fetching riders from RTDB:", error);
         });
 
         // Cleanup subscription on unmount
         return () => unsubscribe();
     }, []);
+
+    const riders: Rider[] = useMemo(() => {
+        return verifiedDrivers.map(driver => {
+            const activeData = activeRidersDict[driver.uid];
+            const userData = usersDict[driver.userId];
+            const driverName = userData ? `${userData.firstName || ''} ${userData.lastName || ''}`.trim() : "Desconocido";
+
+            if (activeData) {
+                return {
+                    ...activeData,
+                    driverId: driver.uid,
+                    driverName: activeData.driverName || driverName,
+                    profilePhoto: activeData.profilePhoto || driver.profileImageUrl || "",
+                    vehicleBrand: driver.vehicleBrand || "N/A",
+                    vehicleModel: driver.vehicleModel || "N/A",
+                    licensePlate: driver.licensePlate || "N/A",
+                } as Rider;
+            } else {
+                return {
+                    driverId: driver.uid,
+                    driverName: driverName,
+                    isActive: false,
+                    lastStatusUpdate: 0,
+                    lat: 0,
+                    lng: 0,
+                    licensePlate: driver.licensePlate || "N/A",
+                    phoneNumber: driver.phoneNumber || "N/A",
+                    profilePhoto: driver.profileImageUrl || "",
+                    seatsAvailable: 0,
+                    status: "No disponible",
+                    timestamp: 0,
+                    vehicleBrand: driver.vehicleBrand || "N/A",
+                    vehicleModel: driver.vehicleModel || "N/A",
+                } as Rider;
+            }
+        });
+    }, [verifiedDrivers, usersDict, activeRidersDict]);
 
     const sortedRiders = useMemo(() => {
         const comparator = (a: Rider, b: Rider) => {
@@ -252,7 +327,10 @@ const ListRiders = () => {
                                     </TableCell>
                                     <TableCell>
                                         <Chip
-                                            color={rider.status === 'disponible' ? 'success' : 'error'}
+                                            color={
+                                                rider.status === 'disponible' ? 'success' :
+                                                rider.status === 'No disponible' ? 'default' : 'warning'
+                                            }
                                             size="small"
                                             label={rider.status}
                                         ></Chip>
@@ -282,9 +360,7 @@ const ListRiders = () => {
                     open={isModalOpen}
                     onClose={handleCloseModal}
                     rider={selectedRider}
-                    onUpdate={() => {
-                        // The real-time listener will handle the update, but we can keep this for future use
-                    }}
+                    onUpdate={fetchFirestoreData}
                 />
             )}
             {selectedDriverDetail && (

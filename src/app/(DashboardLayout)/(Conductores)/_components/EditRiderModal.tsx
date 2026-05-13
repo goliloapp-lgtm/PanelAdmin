@@ -11,6 +11,7 @@ import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateRider, deleteRider } from "@/utils/rider";
 import { Rider } from "./ListRiders";
+import toast from "react-hot-toast";
 
 interface EditRiderModalProps {
   open: boolean;
@@ -44,10 +45,12 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
         phoneNumber: values.phoneNumber,
       };
       await updateRider(rider.driverId, dataToUpdate);
+      toast.success("Cambios guardados correctamente");
       onUpdate();
       onClose();
     } catch (error) {
       console.error("Error updating rider:", error);
+      toast.error("Ocurrió un error al guardar los cambios");
     }
   };
 
@@ -55,10 +58,12 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
     if (window.confirm("¿Estás seguro de que quieres eliminar este conductor?")) {
       try {
         await deleteRider(rider.driverId);
+        toast.success("Conductor eliminado");
         // onUpdate will be called automatically by the realtime listener
         onClose();
       } catch (error) {
         console.error("Error deleting rider:", error);
+        toast.error("Ocurrió un error al eliminar el conductor");
       }
     }
   };
