@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
 import {
     Typography, Box,
@@ -43,11 +43,12 @@ type Order = 'asc' | 'desc';
 
 const Riders = () => {
     const [drivers, setDrivers] = useState<Driver[]>([]);
+    const [usersDict, setUsersDict] = useState<Record<string, any>>({});
     const [loading, setLoading] = useState(true);
     const [selectedDriver, setSelectedDriver] = useState<Driver | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [order, setOrder] = useState<Order>('asc');
-    const [orderBy, setOrderBy] = useState<keyof Driver>('vehicleBrand');
+    const [order, setOrder] = useState<'asc' | 'desc'>('asc');
+    const [orderBy, setOrderBy] = useState<string>('fullName');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
 
@@ -61,7 +62,7 @@ const Riders = () => {
         setIsModalOpen(false);
     };
 
-    const handleRequestSort = (property: keyof Driver) => {
+    const handleRequestSort = (property: string) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
         setOrderBy(property);
@@ -84,15 +85,31 @@ const Riders = () => {
             const q = query(driversCollectionRef, where("isUserVerified", "==", false));
             const querySnapshot = await getDocs(q);
            
-            
             const fetchedDrivers: Driver[] = [];
-            querySnapshot.forEach((doc) => {
-                fetchedDrivers.push({
-                    uid: doc.id,
-                    ...doc.data()
-                } as Driver);
+            const userPromises: Promise<any>[] = [];
+
+            querySnapshot.forEach((docSnap) => {
+                const driverData = { uid: docSnap.id, ...docSnap.data() } as Driver;
+                fetchedDrivers.push(driverData);
+                if (driverData.userId) {
+                    userPromises.push(getDoc(doc(db, "users", driverData.userId)));
+                } else {
+                    userPromises.push(Promise.resolve(null));
+                }
             });
+
+            const userSnaps = await Promise.all(userPromises);
+            const newUsersDict: Record<string, any> = {};
+            
+            fetchedDrivers.forEach((driver, index) => {
+                const uSnap = userSnaps[index];
+                if (uSnap && uSnap.exists()) {
+                    newUsersDict[driver.userId] = uSnap.data();
+                }
+            });
+
             setDrivers(fetchedDrivers);
+            setUsersDict(newUsersDict);
         } catch (error) {
             console.error("Error fetching drivers:", error);
         } finally {
@@ -107,20 +124,33 @@ const Riders = () => {
     const handleUpdateList = () => {
         fetchDrivers();
     };
- 
+
+    const ridersWithNames = useMemo(() => {
+        return drivers.map(driver => {
+            const userData = usersDict[driver.userId];
+            return {
+                ...driver,
+                firstName: userData?.firstName || "Cargando...",
+                lastName: userData?.lastName || "",
+                fullName: `${userData?.firstName || ""} ${userData?.lastName || ""}`.trim() || "Cargando..."
+            };
+        });
+    }, [drivers, usersDict]);
 
     const sortedDrivers = useMemo(() => {
-        const comparator = (a: Driver, b: Driver) => {
-            if (b[orderBy] < a[orderBy]) {
+        const comparator = (a: any, b: any) => {
+            const valA = a[orderBy] || "";
+            const valB = b[orderBy] || "";
+            if (valB < valA) {
                 return order === 'asc' ? 1 : -1;
             }
-            if (b[orderBy] > a[orderBy]) {
+            if (valB > valA) {
                 return order === 'asc' ? -1 : 1;
             }
             return 0;
         };
-        return [...drivers].sort(comparator);
-    }, [drivers, order, orderBy]);
+        return [...ridersWithNames].sort(comparator);
+    }, [ridersWithNames, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
@@ -156,12 +186,12 @@ const Riders = () => {
                                 </TableCell>
                                 <TableCell>
                                     <TableSortLabel
-                                        active={orderBy === 'dniNumber'}
-                                        direction={orderBy === 'dniNumber' ? order : 'asc'}
-                                        onClick={() => handleRequestSort('dniNumber')}
+                                        active={orderBy === 'fullName'}
+                                        direction={orderBy === 'fullName' ? order : 'asc'}
+                                        onClick={() => handleRequestSort('fullName')}
                                     >
                                         <Typography variant="subtitle2" fontWeight={600}>
-                                            DNI
+                                            Nombre
                                         </Typography>
                                     </TableSortLabel>
                                 </TableCell>
@@ -197,11 +227,11 @@ const Riders = () => {
                             {visibleRows.map((driver) => (
                                 <TableRow key={driver.uid}>
                                     <TableCell>
-                                        <Avatar src={driver.profileImageUrl} alt={driver.dniNumber} />
+                                        <Avatar src={driver.profileImageUrl} alt={driver.fullName} />
                                     </TableCell>
                                     <TableCell>
                                         <Typography variant="subtitle2" fontWeight={600}>
-                                            {driver.dniNumber}
+                                            {driver.fullName}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
