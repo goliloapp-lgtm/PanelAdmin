@@ -1,4 +1,4 @@
-
+import React from "react";
 import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCard';
 import {
   Timeline,
@@ -10,11 +10,15 @@ import {
   TimelineContent,
   timelineOppositeContentClasses,
 } from '@mui/lab';
-import { Link, Typography } from '@mui/material';
+import { Typography } from '@mui/material';
 
-const RecentTransactions = () => {
+interface RecentTransactionsProps {
+  transactions: { time: string; text: string; color: string }[];
+}
+
+const RecentTransactions: React.FC<RecentTransactionsProps> = ({ transactions }) => {
   return (
-    <DashboardCard title="Transacciones Recientes">
+    <DashboardCard title="Viajes Recientes">
       <>
         <Timeline
           className="theme-timeline"
@@ -34,65 +38,20 @@ const RecentTransactions = () => {
             },
           }}
         >
-          <TimelineItem>
-            <TimelineOppositeContent>09:30 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="primary" variant="outlined" />
-              <TimelineConnector />
-            </TimelineSeparator>
-            <TimelineContent>Pago recibido de John Doe de $38.90</TimelineContent>
-          </TimelineItem>
-          <TimelineItem>
-            <TimelineOppositeContent>10:00 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="secondary" variant="outlined" />
-              <TimelineConnector />
-            </TimelineSeparator>
-            <TimelineContent>
-              <Typography fontWeight="600">Nuevo viaje agendado</Typography>{' '}
-              <Link href="/" underline="none">
-                #ML-3467
-              </Link>
-            </TimelineContent>
-          </TimelineItem>
-          <TimelineItem>
-            <TimelineOppositeContent>12:00 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="success" variant="outlined" />
-              <TimelineConnector />
-            </TimelineSeparator>
-            <TimelineContent>Pago realizado de $64.95 a Michael</TimelineContent>
-          </TimelineItem>
-          <TimelineItem>
-            <TimelineOppositeContent>09:30 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="warning" variant="outlined" />
-              <TimelineConnector />
-            </TimelineSeparator>
-            <TimelineContent>
-              <Typography fontWeight="600">Nuevo rider registrado</Typography>{' '}
-              <Link href="/" underline="none">
-                #ML-3467
-              </Link>
-            </TimelineContent>
-          </TimelineItem>
-          <TimelineItem>
-            <TimelineOppositeContent>09:30 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="error" variant="outlined" />
-              <TimelineConnector />
-            </TimelineSeparator>
-            <TimelineContent>
-              <Typography fontWeight="600">Nuevo pasajero registrado</Typography>
-            </TimelineContent>
-          </TimelineItem>
-          <TimelineItem>
-            <TimelineOppositeContent>12:00 am</TimelineOppositeContent>
-            <TimelineSeparator>
-              <TimelineDot color="success" variant="outlined" />
-            </TimelineSeparator>
-            <TimelineContent>Pago recibido</TimelineContent>
-          </TimelineItem>
+          {transactions.map((tx, idx) => (
+            <TimelineItem key={idx}>
+              <TimelineOppositeContent>{tx.time}</TimelineOppositeContent>
+              <TimelineSeparator>
+                <TimelineDot color={tx.color as any} variant="outlined" />
+                {idx < transactions.length - 1 && <TimelineConnector />}
+              </TimelineSeparator>
+              <TimelineContent>
+                <Typography variant="body2" fontWeight="500">
+                  {tx.text}
+                </Typography>
+              </TimelineContent>
+            </TimelineItem>
+          ))}
         </Timeline>
       </>
     </DashboardCard>

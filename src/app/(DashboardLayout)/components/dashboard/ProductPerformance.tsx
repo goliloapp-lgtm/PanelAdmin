@@ -1,4 +1,4 @@
-
+import React from "react";
 import {
     Typography, Box,
     Table,
@@ -10,46 +10,22 @@ import {
 } from '@mui/material';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 
-const riders = [
-    {
-        id: "1",
-        name: "Sunil Joshi",        
-        car: "SUV",
-        performance: "Low",
-        pbg: "error.main",
-        budget: "3.9",
-    },
-    {
-        id: "2",
-        name: "Andrew McDownland",       
-        car: "Ford",
-        performance: "High",
-        pbg: "success.main",
-        budget: "24.5",
-    },
-    {
-        id: "3",
-        name: "Christopher Jamil",        
-        car: "Toyota",
-        performance: "Medium",
-        pbg: "secondary.main",
-        budget: "12.8",
-    },
-    {
-        id: "4",
-        name: "Nirav Joshi",
-        car: "Chevrolet",
-        performance: "Low",
-        pbg: "error.main",
-        budget: "2.4",
-    },
-];
+interface DriverPerformanceItem {
+  id: string;
+  name: string;
+  car: string;
+  performance: string;
+  pbg: string;
+  budget: string;
+}
 
+interface ProductPerformanceProps {
+  riders: DriverPerformanceItem[];
+}
 
-const ProductPerformance = () => {
+const ProductPerformance: React.FC<ProductPerformanceProps> = ({ riders }) => {
     return (
-
-        <DashboardCard title="Rendimiento de conductores">
+        <DashboardCard title="Rendimiento y Ganancias de Conductores">
             <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                 <Table
                     aria-label="simple table"
@@ -62,7 +38,7 @@ const ProductPerformance = () => {
                         <TableRow>
                             <TableCell>
                                 <Typography variant="subtitle2" fontWeight={600}>
-                                    Id
+                                    Posición
                                 </Typography>
                             </TableCell>
                             <TableCell>
@@ -82,14 +58,14 @@ const ProductPerformance = () => {
                             </TableCell>
                             <TableCell align="right">
                                 <Typography variant="subtitle2" fontWeight={600}>
-                                    Generado
+                                    Generado (Conductor)
                                 </Typography>
                             </TableCell>
                         </TableRow>
                     </TableHead>
                     <TableBody>
                         {riders.map((rider) => (
-                            <TableRow key={rider.name}>
+                            <TableRow key={rider.id + rider.name}>
                                 <TableCell>
                                     <Typography
                                         sx={{
@@ -111,7 +87,6 @@ const ProductPerformance = () => {
                                             <Typography variant="subtitle2" fontWeight={600}>
                                                 {rider.name}
                                             </Typography>
-                                            
                                         </Box>
                                     </Box>
                                 </TableCell>
@@ -128,11 +103,11 @@ const ProductPerformance = () => {
                                             color: "#fff",
                                         }}
                                         size="small"
-                                        label={rider.performance}
+                                        label={rider.performance === "High" ? "Alto" : rider.performance === "Medium" ? "Medio" : "Bajo"}
                                     ></Chip>
                                 </TableCell>
                                 <TableCell align="right">
-                                    <Typography variant="h6">${rider.budget}k</Typography>
+                                    <Typography variant="h6">${Number(rider.budget).toLocaleString()}</Typography>
                                 </TableCell>
                             </TableRow>
                         ))}

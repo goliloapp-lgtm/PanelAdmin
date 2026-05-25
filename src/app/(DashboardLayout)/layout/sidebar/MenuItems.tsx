@@ -6,6 +6,7 @@ import {
   IconRouteSquare,
   IconCar,
   IconUserExclamation,
+  IconSettings,
 } from "@tabler/icons-react";
 
 import { uniqueId } from "lodash";
@@ -69,6 +70,16 @@ const Menuitems = [
     title: "Viajes Cancelados",
     icon: IconRouteX,
     href: "/Viajes-cancelados",
+  },
+  {
+    navlabel: true,
+    subheader: "SOPORTE Y CONTROL",
+  },
+  {
+    id: uniqueId(),
+    title: "Mantenimiento / Limpieza",
+    icon: IconSettings,
+    href: "/maintenance",
   },
 
 ];

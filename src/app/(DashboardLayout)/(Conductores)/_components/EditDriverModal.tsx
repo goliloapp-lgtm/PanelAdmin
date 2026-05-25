@@ -12,15 +12,22 @@ import {
   Divider,
   Card,
   CardMedia,
+  CircularProgress,
+  Chip,
 } from "@mui/material";
 import Grid from '@mui/material/Grid';
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateDriver, deleteDriver } from "@/utils/driver";
-import { getUser } from "@/utils/user";
+import { getUser, deleteUser } from "@/utils/user";
 import { Driver } from "./Riders";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
+import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
+import {
+  getEmailVerificationStatusCallable,
+  requestEmailVerificationCodeCallable,
+} from "@/utils/functions";
 
 interface UserData {
   firstName?: string;
@@ -52,6 +59,47 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
   readOnly = false,
 }) => {
   const [userData, setUserData] = useState<UserData | null>(null);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<{ isVerified: boolean; verifiedAt?: string | null } | null>(null);
+  const [checkingEmail, setCheckingEmail] = useState(false);
+  const [sendingVerification, setSendingVerification] = useState(false);
+
+  useEffect(() => {
+    if (open && driver?.userId) {
+      const fetchStatus = async () => {
+        setCheckingEmail(true);
+        try {
+          const res = await getEmailVerificationStatusCallable({ userId: driver.userId });
+          setEmailStatus(res.data);
+        } catch (error) {
+          console.error("Error fetching email status:", error);
+        } finally {
+          setCheckingEmail(false);
+        }
+      };
+      fetchStatus();
+    } else {
+      setEmailStatus(null);
+    }
+  }, [open, driver]);
+
+  const handleSendVerification = async () => {
+    if (!userData?.email) return;
+    setSendingVerification(true);
+    try {
+      const res = await requestEmailVerificationCodeCallable({ email: userData.email, locale: "es" });
+      if (res.data.success) {
+        toast.success("Código de verificación enviado al correo del conductor.");
+      } else {
+        toast.error("Error al enviar código de verificación.");
+      }
+    } catch (error: any) {
+      console.error("Error sending verification code:", error);
+      toast.error(`Error: ${error.message || error}`);
+    } finally {
+      setSendingVerification(false);
+    }
+  };
 
   useEffect(() => {
     if (driver?.userId) {
@@ -87,17 +135,22 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     }
   };
 
-  const handleDelete = async () => {
-    if (window.confirm("¿Estás seguro de que quieres eliminar este conductor?")) {
-      try {
-        await deleteDriver(driver.uid);
-        toast.success("Conductor eliminado");
-        if (onUpdate) onUpdate();
-        onClose();
-      } catch (error) {
-        console.error("Error deleting driver:", error);
-        toast.error("Ocurrió un error al eliminar el conductor");
+  const handleDeleteConfirm = async () => {
+    try {
+      // Delete Firestore drivers doc
+      await deleteDriver(driver.uid);
+
+      // Delete Firestore users doc if present
+      if (driver.userId) {
+        await deleteUser(driver.userId);
       }
+
+      toast.success("Conductor y sus datos asociados fueron eliminados");
+      if (onUpdate) onUpdate();
+      onClose();
+    } catch (error) {
+      console.error("Error deleting driver completely:", error);
+      toast.error("Ocurrió un error al eliminar el conductor");
     }
   };
 
@@ -146,6 +199,46 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       InputProps={{ readOnly: true }}
                       variant="filled"
                     />
+
+                    {/* Email Verification Status Card */}
+                    <Box sx={{ mt: 1, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                        Estado de Verificación de Correo
+                      </Typography>
+                      {checkingEmail ? (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <CircularProgress size={16} />
+                          <Typography variant="body2" color="textSecondary">Consultando...</Typography>
+                        </Box>
+                      ) : emailStatus ? (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <Chip
+                              label={emailStatus.isVerified ? "Verificado" : "No verificado"}
+                              color={emailStatus.isVerified ? "success" : "warning"}
+                              size="small"
+                            />
+                            {!emailStatus.isVerified && (
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={handleSendVerification}
+                                disabled={sendingVerification || !userData?.email}
+                              >
+                                {sendingVerification ? "Enviando..." : "Enviar Código"}
+                              </Button>
+                            )}
+                          </Box>
+                          {emailStatus.isVerified && emailStatus.verifiedAt && (
+                            <Typography variant="caption" color="textSecondary">
+                              Verificado el: {new Date(emailStatus.verifiedAt).toLocaleString()}
+                            </Typography>
+                          )}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="textSecondary">No disponible</Typography>
+                      )}
+                    </Box>
                   </Box>
 
                   <Divider sx={{ my: 2 }} />
@@ -247,7 +340,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
               <Button onClick={onClose} variant="outlined">{readOnly ? "Cerrar" : "Cancelar"}</Button>
               {!readOnly && (
                 <>
-                  <Button color="error" onClick={handleDelete} variant="outlined">
+                  <Button color="error" onClick={() => setIsConfirmOpen(true)} variant="outlined">
                     Rechazar Conductor
                   </Button>
                   <Button type="submit" variant="contained" color="primary">
@@ -259,6 +352,13 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
           </Form>
         )}
       </Formik>
+      <DeleteConfirmationDialog
+        open={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        itemName={userData ? `${userData.firstName || ''} ${userData.lastName || ''}`.trim() : "Conductor sin verificar"}
+        itemType="conductor"
+      />
     </Dialog>
   );
 };

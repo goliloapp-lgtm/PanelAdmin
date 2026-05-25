@@ -5,8 +5,12 @@ import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCa
 import dynamic from "next/dynamic";
 const Chart = dynamic(() => import("react-apexcharts"), { ssr: false });
 
+interface SalesOverviewProps {
+  series: { name: string; data: number[] }[];
+  categories: string[];
+}
 
-const SalesOverview = () => {
+const SalesOverview: React.FC<SalesOverviewProps> = ({ series, categories }) => {
     // Estado para el mes seleccionado
     const [month, setMonth] = React.useState('1');
 
@@ -47,7 +51,7 @@ const SalesOverview = () => {
             colors: ["transparent"],
         },
         dataLabels: { enabled: false },
-        legend: { show: false },
+        legend: { show: true, position: 'top', horizontalAlign: 'right' },
         grid: {
             borderColor: 'rgba(0,0,0,0.1)',
             strokeDashArray: 3,
@@ -55,7 +59,7 @@ const SalesOverview = () => {
         },
         yaxis: { tickAmount: 4 },
         xaxis: {
-            categories: ['16/08', '17/08', '18/08', '19/08', '20/08', '21/08', '22/08', '23/08'],
+            categories: categories.length > 0 ? categories : ['16/08', '17/08', '18/08', '19/08', '20/08', '21/08', '22/08', '23/08'],
             axisBorder: { show: false },
         },
         tooltip: {
@@ -63,18 +67,6 @@ const SalesOverview = () => {
             fillSeriesColor: false,
         },
     };
-
-    // Datos para el gráfico
-    const seriescolumnchart: any = [
-        {
-            name: 'Ganancias este mes',
-            data: [355, 390, 300, 350, 390, 180, 355, 390],
-        },
-        {
-            name: 'Gastos este mes',
-            data: [280, 250, 325, 215, 250, 310, 280, 250],
-        },
-    ];
 
     // Renderiza la tarjeta con el gráfico y el selector de mes
     return (
@@ -86,14 +78,15 @@ const SalesOverview = () => {
                 size="small"
                 onChange={handleChange}
             >
-                <MenuItem value={1}>Julio 2025</MenuItem>
-                <MenuItem value={2}>Junio 2025</MenuItem>
-                <MenuItem value={3}>Mayo 2025</MenuItem>
+                <MenuItem value={1}>Últimos viajes</MenuItem>
             </Select>
         }>
             <Chart
                 options={optionscolumnchart}
-                series={seriescolumnchart}
+                series={series.length > 0 ? series : [
+                    { name: 'Ventas', data: [0] },
+                    { name: 'Comisión', data: [0] }
+                ]}
                 type="bar"
                 height={370} width={"100%"}
             />

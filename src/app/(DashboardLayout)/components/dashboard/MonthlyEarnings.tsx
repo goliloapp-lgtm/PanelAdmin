@@ -1,17 +1,26 @@
-
+import React from "react";
 import dynamic from "next/dynamic";
 const Chart = dynamic(() => import("react-apexcharts"), { ssr: false });
 import { useTheme } from '@mui/material/styles';
 import { Stack, Typography, Avatar, Fab } from '@mui/material';
-import { IconArrowDownRight, IconCurrencyDollar } from '@tabler/icons-react';
+import { IconArrowDownRight, IconArrowUpLeft, IconCurrencyDollar } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCard';
 
-const MonthlyEarnings = () => {
+interface MonthlyEarningsProps {
+  gananciasMes: number;
+  cambioGananciasMes: number;
+  chartData: number[];
+}
+
+const MonthlyEarnings: React.FC<MonthlyEarningsProps> = ({ gananciasMes, cambioGananciasMes, chartData }) => {
   // chart color
   const theme = useTheme();
   const secondary = theme.palette.secondary.main;
   const secondarylight = '#f5fcff';
   const errorlight = '#fdede8';
+  const successlight = theme.palette.success.light;
+
+  const isPositive = cambioGananciasMes >= 0;
 
   // chart
   const optionscolumnchart: any = {
@@ -46,15 +55,15 @@ const MonthlyEarnings = () => {
   };
   const seriescolumnchart: any = [
     {
-      name: '',
+      name: 'Comisiones ($)',
       color: secondary,
-      data: [25, 66, 20, 40, 12, 58, 20],
+      data: chartData.length > 0 ? chartData : [0, 0, 0, 0, 0, 0, 0],
     },
   ];
 
   return (
     <DashboardCard
-      title="Ganancias del Mes"
+      title="Ganancias del Mes (Comisión)"
       action={
         <Fab color="secondary" size="medium" sx={{color: '#ffffff'}}>
           <IconCurrencyDollar width={24} />
@@ -66,14 +75,18 @@ const MonthlyEarnings = () => {
     >
       <>
         <Typography variant="h3" fontWeight="700" mt="-20px">
-          $6,820
+          ${gananciasMes.toLocaleString()}
         </Typography>
         <Stack direction="row" spacing={1} my={1} alignItems="center">
-          <Avatar sx={{ bgcolor: errorlight, width: 27, height: 27 }}>
-            <IconArrowDownRight width={20} color="#FA896B" />
+          <Avatar sx={{ bgcolor: isPositive ? successlight : errorlight, width: 27, height: 27 }}>
+            {isPositive ? (
+              <IconArrowUpLeft width={20} color="#39B69A" />
+            ) : (
+              <IconArrowDownRight width={20} color="#FA896B" />
+            )}
           </Avatar>
           <Typography variant="subtitle2" fontWeight="600">
-            -9%
+            {isPositive ? `+${cambioGananciasMes}%` : `${cambioGananciasMes}%`}
           </Typography>
           <Typography variant="subtitle2" color="textSecondary">
             Mes anterior

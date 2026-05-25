@@ -1,121 +1,381 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Reglas para la colección de usuarios
-    match /drivers/{driverId} {
-      // Allow authenticated admin users to read, write, and delete any driver document
-      allow read, write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-
-      // Allow authenticated drivers to read and write their own driver document
-      allow read, write: if request.auth != null && request.auth.uid == driverId;
+    
+    // ========================================
+    // FUNCIONES AUXILIARES
+    // ========================================
+    
+    // Verifica si el usuario está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
+    // Verifica si el usuario es el propietario del documento
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Verifica si la cuenta del usuario está activa
+    function isAccountActive() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+    
+    // Verifica si el usuario tiene rol de admin
+    // El campo 'role' en el documento del usuario contiene el UID del documento en colección 'roles'
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role != null &&
+             get(/databases/$(database)/documents/roles/$(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role)) != null;
+    }
+    
+    // ========================================
+    // COLECCIÓN: users
+    // ========================================
     match /users/{userId} {
-      // Allow authenticated admin users to read, write, and delete any user document
-      allow read, write: if request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-
-      allow read, write: if request.auth != null && request.auth.uid == userId;
-       match /pushTokens/{tokenId} {
-    allow read, write: if request.auth != null && request.auth.uid == userId;
-  }
-    }
-    
-        // === Colección drivers ===
-    match /drivers/{driverId} {
-      allow read, write: if request.auth != null && request.auth.uid == driverId;
-    }
-    
-    
-     match /driverLiveLocations/{driverId} {
-      allow read, write: if request.auth != null && request.auth.uid == driverId;
-    }
-    
-    // === Colección starTrippassager ===
-    match /starTrippassager/{ratingId} {
-      allow read, write: if request.auth != null && 
-        request.auth.uid == resource.data.driverId;
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.driverId;
-    }
-    
-        // === Colección starTrippassager ===
-    // Calificaciones de pasajeros por conductores (legacy)
-    match /starTrippassager/{ratingId} {
-      allow read, write: if request.auth != null && 
-        request.auth.uid == resource.data.driverId;
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.driverId;
-    }
-    
-    // === Colección rating ===
-    // Calificaciones de pasajeros por conductores
-    match /rating/{ratingId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.driverId;
-    }
-    
-    // === Colección historyTrips ===
-    // Historial de viajes completados por conductores
-    match /historyTrips/{tripId} {
-      allow read: if request.auth != null;
-      allow create: if request.auth != null && 
-        request.auth.uid == request.resource.data.driverId;
-    }
-    
-    // === Colección vehicle_catalog ===
-    // Catálogo de marcas y modelos de vehículos (lectura pública)
-    match /vehicle_catalog/{brandId} {
-      allow read: if request.auth != null;
+      // Permitir lectura al propietario o admin
+      allow read: if isOwner(userId) || isAdmin();
       
-      // === Subcolección models ===
-      match /models/{modelId} {
-        allow read: if request.auth != null;
-      }
+      // Permitir creación durante el registro (sin autenticación previa)
+      // Solo se requieren email y userType
+      // El frontend debe enviar isActive=false y createdAt=Timestamp.now() por defecto
+      // Admin también puede crear usuarios
+      allow create: if (request.resource.data.keys().hasAll([
+        'email', 'userType'
+      ]) && 
+      request.resource.data.userType in ['client', 'driver']) || isAdmin();
+      
+      // Permitir actualización al propietario o admin
+      // No se puede cambiar: email, userType, createdAt
+      allow update: if (isOwner(userId) && 
+                       !request.resource.data.diff(resource.data).affectedKeys()
+                         .hasAny(['email', 'userType', 'createdAt', 'isActive'])) || isAdmin();
+      
+      // Solo admin puede eliminar usuarios
+      allow delete: if isAdmin();
     }
     
-    
-    
-      // === Colección driverAccounts ===
-    // Información de pago de conductores (Stripe y banco)
-    match /driverAccounts/{driverId} {
-      allow read, write: if request.auth != null && request.auth.uid == driverId;
+    // ========================================
+    // COLECCIÓN: reactivationTokens
+    // ========================================
+    match /reactivationTokens/{tokenId} {
+      // Solo Cloud Functions pueden leer y escribir tokens
+      // Los clientes no deben tener acceso directo
+      allow read, write: if false;
     }
     
-    // Reglas para la colección de viajes (trips)
+    // ========================================
+    // COLECCIÓN: notifications
+    // ========================================
+    match /notifications/{notificationId} {
+      // Los usuarios solo pueden leer sus propias notificaciones
+      // Los admins pueden leer todas las notificaciones
+      allow read: if isAuthenticated() && 
+                     (resource.data.recipientId == request.auth.uid || isAdmin());
+      
+      // Admin puede crear, actualizar, eliminar notificaciones
+      // Cloud Functions también pueden (write: false no aplica para ellos)
+      allow create, update, delete: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: mail
+    // ========================================
+    match /mail/{mailId} {
+      // Admin puede leer y escribir mails
+      allow read, write: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: trips (Viajes/Carreras)
+    // ========================================
     match /trips/{tripId} {
-      // Un usuario autenticado puede crear un viaje.
-      allow create: if request.auth != null;
-
-      // Un usuario puede leer o actualizar un viaje si es el pasajero de ese viaje.
-      allow read, update: if request.auth != null && request.auth.uid == resource.data.user_id;
-    }
-
-    // Rules for customers collection
-    match /customers/{uid} {
-      allow read, write: if request.auth.uid == uid;
-
-      // Rules for checkout_sessions subcollection
-      match /checkout_sessions/{sessionId} {
-        allow create: if request.auth.uid == uid;
-        allow read, update: if request.auth.uid == uid;
-      }
-
-      // Rules for payments subcollection
-      match /payments/{paymentId} {
-        allow read: if request.auth.uid == uid;
-      }
-    }
-
-    // Rules for rating collection
-    match /rating/{ratingId} {
-      // Allow authenticated users to create a rating
-      // if the passengerId in the document matches their own user ID.
-      allow create: if request.auth != null && request.resource.data.passengerId == request.auth.uid;
+      // Lectura: Solo cliente, conductor del viaje, o admin
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
       
-      // Allow users to read ratings if they are the passenger or the driver.
-      allow read: if request.auth != null && 
-                   (resource.data.passengerId == request.auth.uid || resource.data.driverId == request.auth.uid);
+      // Creación: Solo el cliente puede crear (debe ser su propio userId) o admin
+      allow create: if isAuthenticated() &&
+                       (isAccountActive() &&
+                        request.resource.data.userId == request.auth.uid &&
+                        request.resource.data.status == 'pending' || isAdmin());
+      
+      // Actualización:
+      // - Conductor puede cambiar status y completar viaje
+      // - Cliente puede cancelar si está en pending
+      // - Admin puede actualizar cualquier campo
+      allow update: if isAuthenticated() && (isAccountActive() || isAdmin()) && (
+        // Conductor actualiza status, completa viaje, agrega paymentIntent
+        (resource.data.driverId == request.auth.uid &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status', 'completedAt', 'stripePaymentIntentId'])) ||
+        // Cliente cancela si está en pending
+        (resource.data.userId == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.status == 'cancelled') ||
+        // Admin puede actualizar cualquier cosa
+        isAdmin()
+      );
+      
+      // Solo admin puede eliminar
+      allow delete: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: rides (Alias de trips - para compatibilidad)
+    // ========================================
+    match /rides/{rideId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.clientId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      allow create: if isAuthenticated() &&
+                       (isAccountActive() &&
+                        (request.resource.data.userId == request.auth.uid ||
+                         request.resource.data.clientId == request.auth.uid) &&
+                        request.resource.data.status == 'pending' || isAdmin());
+      
+      allow update: if isAuthenticated() && (isAccountActive() || isAdmin()) && (
+        (resource.data.driverId == request.auth.uid) ||
+        ((resource.data.userId == request.auth.uid || 
+          resource.data.clientId == request.auth.uid) &&
+         resource.data.status == 'pending') ||
+        isAdmin()
+      );
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: drivers (Perfiles de Conductores)
+    // ========================================
+    match /drivers/{driverId} {
+      // Lectura: cualquiera autenticado o admin
+      allow read: if isAuthenticated();
+      
+      // Creación: Solo el conductor puede crear su perfil o admin
+      allow create: if isAuthenticated() &&
+                       (request.auth.uid == driverId || isAdmin());
+      
+      // Actualización:
+      // - Conductor puede actualizar sus datos (excepto walletBalance y userId)
+      // - Admin puede actualizar cualquier campo
+      allow update: if isAuthenticated() &&
+                       (request.auth.uid == driverId &&
+                        !request.resource.data.diff(resource.data).affectedKeys()
+                          .hasAny(['walletBalance', 'userId', 'createdAt']) || isAdmin());
+      
+      allow delete: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: vehicle_catalog (Catálogo de Vehículos)
+    // ========================================
+    match /vehicle_catalog/{brandId} {
+      // Todos los usuarios autenticados pueden leer el catálogo
+      allow read: if isAuthenticated();
+      
+      // Solo admins pueden escribir
+      allow write: if isAdmin();
+      
+      // Subcolección de modelos
+      match /models/{modelId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+    }
+    
+    // ========================================
+    // COLECCIÓN: pricing_config (Configuración de Precios)
+    // ========================================
+    match /pricing_config/{configId} {
+      // Todos los usuarios autenticados pueden leer
+      allow read: if isAuthenticated();
+      
+      // Solo admins pueden escribir
+      allow write: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: wallets (para futuro)
+    // ========================================
+    match /wallets/{userId} {
+      // Solo el propietario o admin puede leer su wallet
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Solo admins pueden escribir
+      allow write: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: transactions (Transacciones Financieras)
+    // ========================================
+    match /transactions/{transactionId} {
+      // Lectura: Solo el conductor, cliente involucrado, o admin
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Solo admins pueden escribir
+      allow write: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: rating (Calificaciones)
+    // ========================================
+    match /rating/{ratingId} {
+      // Cliente, conductor, o admin pueden leer
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Cliente, conductor o admin pueden crear
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Cliente, conductor o admin pueden actualizar
+      allow update: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Cliente, conductor o admin pueden eliminar
+      allow delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+    
+    // ========================================
+    // COLECCIÓN: historyTrips (Historial de Viajes)
+    // ========================================
+    match /historyTrips/{tripId} {
+      // Cliente, conductor, o admin pueden ver
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+
+      // Cliente, conductor o admin pueden escribir
+      // Se valida que el usuario sea uno de los involucrados en el viaje
+      allow create, update, delete: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.driverId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+    
+    // ========================================
+    // COLECCIÓN: rooms (Salas de Chat)
+    // ========================================
+    match /rooms/{roomId} {
+      // Solo participantes o admin pueden acceder
+      allow read, write: if isAuthenticated() && (
+        request.auth.uid in resource.data.participants || isAdmin()
+      );
+      
+      // Subcolección de mensajes
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants || isAdmin()
+        );
+        
+        allow create: if isAuthenticated() && (
+          request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.participants &&
+          request.resource.data.senderId == request.auth.uid || isAdmin()
+        );
+        
+        allow update, delete: if isAdmin();
+      }
+    }
+    
+    // ========================================
+    // COLECCIÓN: vehicles (Vehículos de Conductores)
+    // ========================================
+    match /vehicles/{vehicleId} {
+      // Todos pueden ver vehículos (para mostrar en app)
+      allow read: if isAuthenticated();
+      
+      // Solo el conductor propietario puede crear/actualizar o admin
+      allow create, update: if isAuthenticated() &&
+                               (request.resource.data.driverId == request.auth.uid || isAdmin());
+      
+      allow delete: if isAuthenticated() &&
+                      (resource.data.driverId == request.auth.uid || isAdmin());
+    }
+    
+    // ========================================
+    // COLECCIÓN: driverAccounts (Cuentas de Pago)
+    // ========================================
+    match /driverAccounts/{accountId} {
+      // Lectura: cualquier usuario autenticado
+      allow read: if isAuthenticated();
+
+      // Creación: cualquier usuario autenticado
+      allow create: if isAuthenticated();
+
+      // Actualización: cualquier usuario autenticado
+      allow update: if isAuthenticated();
+
+      // Eliminación: solo admin
+      allow delete: if isAdmin();
+    }
+
+    // ========================================
+    // COLECCIÓN: services (Tipos de Servicio)
+    // ========================================
+    match /services/{serviceId} {
+      // Todos pueden leer tipos de servicio
+      allow read: if isAuthenticated();
+      
+      // Solo admins pueden escribir
+      allow write: if isAdmin();
+    }
+    
+    // ========================================
+    // COLECCIÓN: roles (Roles del Sistema)
+    // ========================================
+    match /roles/{roleId} {
+      // Solo admins pueden leer y escribir roles
+      allow read, write: if isAdmin();
+    }
+
+    // ========================================
+    // COLECCIÓN: admins (Administradores) - Obsoleto, usar roles
+    // ========================================
+    match /admins/{adminId} {
+      // Solo admins pueden leer la lista
+      allow read: if isAdmin();
+      
+      // Nadie puede escribir (se configura manualmente)
+      allow write: if false;
+    }
+    
+    // ========================================
+    // REGLA POR DEFECTO: SOLO USUARIOS AUTENTICADOS
+    // ========================================
+    // Los admins tienen acceso completo a todas las colecciones
+    // Los usuarios normales autenticados tienen solo lectura
+    match /{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isAdmin();
     }
   }
 }

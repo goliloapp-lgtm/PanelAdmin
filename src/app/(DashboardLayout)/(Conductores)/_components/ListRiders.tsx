@@ -36,6 +36,7 @@ export interface Rider {
     timestamp: number;
     vehicleBrand: string;
     vehicleModel: string;
+    isConductorActive?: boolean;
 }
 
 type Order = 'asc' | 'desc';
@@ -183,6 +184,8 @@ const ListRiders = () => {
                     vehicleBrand: driver.vehicleBrand || "N/A",
                     vehicleModel: driver.vehicleModel || "N/A",
                     licensePlate: driver.licensePlate || "N/A",
+                    phoneNumber: activeData.phoneNumber || driver.phoneNumber || "N/A",
+                    isConductorActive: driver.isConductorActive ?? false,
                 } as Rider;
             } else {
                 return {
@@ -201,6 +204,7 @@ const ListRiders = () => {
                     timestamp: 0,
                     vehicleBrand: driver.vehicleBrand || "N/A",
                     vehicleModel: driver.vehicleModel || "N/A",
+                    isConductorActive: driver.isConductorActive ?? false,
                 } as Rider;
             }
         });

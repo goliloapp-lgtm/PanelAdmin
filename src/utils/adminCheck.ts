@@ -5,10 +5,8 @@ const db = getFirestore(firebaseApp);
 
 /**
  * Checks if the user with the given UID has an 'admin' role.
- * Supports both:
- * 1. Simple 'role' string field in the user document equals 'admin' (e.g. users/{uid}.role === 'admin').
- * 2. The 'role' field in the user document contains the ID of a document in the 'roles' collection,
- *    and that role document has the name 'admin'.
+ * Verifies that the 'role' field in the user document contains the ID of a document 
+ * in the 'roles' collection, and that role document has the name 'admin'.
  * 
  * @param uid User identifier
  * @returns boolean indicating if the user is an administrator
@@ -29,11 +27,6 @@ export async function isUserAdmin(uid: string): Promise<boolean> {
       return false;
     }
 
-    // Direct check (case-insensitive) if role string is directly 'admin'
-    if (typeof roleId === 'string' && roleId.toLowerCase() === 'admin') {
-      return true;
-    }
-
     // Reference check in the 'roles' collection
     const roleRef = doc(db, 'roles', roleId);
     const roleSnap = await getDoc(roleRef);
@@ -51,7 +44,7 @@ export async function isUserAdmin(uid: string): Promise<boolean> {
 }
 
 /**
- * Retrieves the user's role name and description.
+ * Retrieves the user's role name and description by querying the roles collection.
  * 
  * @param uid User identifier
  * @returns Role data or null
@@ -70,14 +63,6 @@ export async function getUserRole(uid: string): Promise<{ name: string; descript
 
     if (!roleId) {
       return null;
-    }
-
-    // If it's directly the string 'admin'
-    if (typeof roleId === 'string' && roleId.toLowerCase() === 'admin') {
-      return {
-        name: 'admin',
-        description: 'Administrador del sistema',
-      };
     }
 
     // Retrieve from 'roles' collection

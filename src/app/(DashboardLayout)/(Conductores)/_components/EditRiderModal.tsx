@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -6,14 +7,18 @@ import {
   Button,
   TextField,
   Box,
+  FormControlLabel,
+  Switch,
 } from "@mui/material";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateRider, deleteRider } from "@/utils/rider";
-import { updateDriver } from "@/utils/driver";
-import { updateUser } from "@/utils/user";
+import { updateDriver, deleteDriver } from "@/utils/driver";
+import { updateUser, deleteUser } from "@/utils/user";
 import { Rider } from "./ListRiders";
 import toast from "react-hot-toast";
+import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
+import { deactivateDriverCallable } from "@/utils/functions";
 
 interface EditRiderModalProps {
   open: boolean;
@@ -25,7 +30,6 @@ interface EditRiderModalProps {
 const validationSchema = Yup.object({
   driverName: Yup.string().required("El nombre es requerido"),
   licensePlate: Yup.string().required("La placa es requerida"),
-  status: Yup.string().required("El estado es requerido"),
   phoneNumber: Yup.string().required("El teléfono es requerido"),
 });
 
@@ -35,23 +39,32 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
   rider,
   onUpdate,
 }) => {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
   if (!rider) return null;
 
-  const handleUpdate = async (values: Rider) => {
+  const handleUpdate = async (values: Rider & { isConductorActive?: boolean }) => {
     try {
-      // 1. Update Realtime Database (RTDB) for live status/tracking
-      const rtdbData: Partial<Rider> = {
-        driverName: values.driverName,
-        licensePlate: values.licensePlate,
-        status: values.status,
-        phoneNumber: values.phoneNumber,
-      };
-      await updateRider(rider.driverId, rtdbData);
+      if (values.isConductorActive === false) {
+        // If driver is deactivated, use the backend Cloud Function to clean up active session
+        await deactivateDriverCallable({ driverId: rider.driverId });
+      } else {
+        // Otherwise, update live status in RTDB
+        const rtdbData: Partial<Rider> & { isActive?: boolean } = {
+          driverName: values.driverName,
+          licensePlate: values.licensePlate,
+          status: "disponible",
+          isActive: true,
+          phoneNumber: values.phoneNumber,
+        };
+        await updateRider(rider.driverId, rtdbData);
+      }
 
-      // 2. Update Firestore 'drivers' collection (persistent profile)
+      // Update Firestore 'drivers' collection (persistent profile)
       await updateDriver(rider.driverId, {
         licensePlate: values.licensePlate,
         phoneNumber: values.phoneNumber,
+        isConductorActive: values.isConductorActive ?? false,
       });
 
       // 3. Update Firestore 'users' collection (first and last name) if userId is present
@@ -70,21 +83,30 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
       onClose();
     } catch (error) {
       console.error("Error updating rider:", error);
-      toast.error("Ocurrió un error al guardar los cambios");
+      const errMsg = error instanceof Error ? error.message : String(error);
+      toast.error(`Error al guardar: ${errMsg}`);
     }
   };
 
-  const handleDelete = async () => {
-    if (window.confirm("¿Estás seguro de que quieres eliminar este conductor?")) {
-      try {
-        await deleteRider(rider.driverId);
-        toast.success("Conductor eliminado");
-        // onUpdate will be called automatically by the realtime listener
-        onClose();
-      } catch (error) {
-        console.error("Error deleting rider:", error);
-        toast.error("Ocurrió un error al eliminar el conductor");
+  const handleDeleteConfirm = async () => {
+    try {
+      // Delete from RTDB
+      await deleteRider(rider.driverId);
+      
+      // Delete from Firestore drivers
+      await deleteDriver(rider.driverId);
+      
+      // Delete from Firestore users
+      if (rider.userId) {
+        await deleteUser(rider.userId);
       }
+      
+      toast.success("Conductor y todos sus datos asociados fueron eliminados de las colecciones");
+      onUpdate();
+      onClose();
+    } catch (error) {
+      console.error("Error deleting rider completely:", error);
+      toast.error("Ocurrió un error al eliminar los datos del conductor");
     }
   };
 
@@ -92,12 +114,15 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Editar Conductor</DialogTitle>
       <Formik
-        initialValues={rider}
+        initialValues={{
+          ...rider,
+          isConductorActive: rider.isConductorActive ?? false
+        }}
         validationSchema={validationSchema}
         onSubmit={handleUpdate}
         enableReinitialize
       >
-        {({ errors, touched }) => (
+        {({ errors, touched, values, setFieldValue }) => (
           <Form>
             <DialogContent>
               <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
@@ -125,19 +150,21 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
                   error={touched.phoneNumber && !!errors.phoneNumber}
                   helperText={<ErrorMessage name="phoneNumber" />}
                 />
-                <Field
-                  name="status"
-                  as={TextField}
-                  label="Estado"
-                  fullWidth
-                  error={touched.status && !!errors.status}
-                  helperText={<ErrorMessage name="status" />}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={values.isConductorActive}
+                      onChange={(e) => setFieldValue('isConductorActive', e.target.checked)}
+                      name="isConductorActive"
+                    />
+                  }
+                  label="Conductor Activo"
                 />
               </Box>
             </DialogContent>
             <DialogActions>
               <Button onClick={onClose}>Cancelar</Button>
-              <Button color="error" onClick={handleDelete}>
+              <Button color="error" onClick={() => setIsConfirmOpen(true)}>
                 Eliminar Conductor
               </Button>
               <Button type="submit" variant="contained" color="primary">
@@ -147,6 +174,13 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
           </Form>
         )}
       </Formik>
+      <DeleteConfirmationDialog
+        open={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        itemName={rider.driverName}
+        itemType="conductor"
+      />
     </Dialog>
   );
 };

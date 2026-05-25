@@ -1,4 +1,5 @@
 
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -7,12 +8,21 @@ import {
   Button,
   TextField,
   Box,
+  CircularProgress,
+  Chip,
+  Divider,
+  Typography,
 } from "@mui/material";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateUser, deleteUser } from "@/utils/user";
 import { Passenger } from "../../(Pasajeros)/_components/ListPassengers";
 import toast from "react-hot-toast";
+import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
+import {
+  getEmailVerificationStatusCallable,
+  requestEmailVerificationCodeCallable,
+} from "@/utils/functions";
 
 interface EditPassengerModalProps {
   open: boolean;
@@ -35,6 +45,48 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
   passenger,
   onUpdate,
 }) => {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<{ isVerified: boolean; verifiedAt?: string | null } | null>(null);
+  const [checkingEmail, setCheckingEmail] = useState(false);
+  const [sendingVerification, setSendingVerification] = useState(false);
+
+  useEffect(() => {
+    if (open && passenger?.id) {
+      const fetchStatus = async () => {
+        setCheckingEmail(true);
+        try {
+          const res = await getEmailVerificationStatusCallable({ userId: passenger.id });
+          setEmailStatus(res.data);
+        } catch (error) {
+          console.error("Error fetching email status:", error);
+        } finally {
+          setCheckingEmail(false);
+        }
+      };
+      fetchStatus();
+    } else {
+      setEmailStatus(null);
+    }
+  }, [open, passenger]);
+
+  const handleSendVerification = async () => {
+    if (!passenger?.email) return;
+    setSendingVerification(true);
+    try {
+      const res = await requestEmailVerificationCodeCallable({ email: passenger.email, locale: "es" });
+      if (res.data.success) {
+        toast.success("Código de verificación enviado al correo del pasajero.");
+      } else {
+        toast.error("Error al enviar código de verificación.");
+      }
+    } catch (error: any) {
+      console.error("Error sending verification code:", error);
+      toast.error(`Error: ${error.message || error}`);
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
   if (!passenger) return null;
 
   const handleUpdate = async (values: Passenger) => {
@@ -49,17 +101,15 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
     }
   };
 
-  const handleDelete = async () => {
-    if (window.confirm("¿Estás seguro de que quieres eliminar este usuario?")) {
-      try {
-        await deleteUser(passenger.id);
-        toast.success("Usuario eliminado");
-        onUpdate();
-        onClose();
-      } catch (error) {
-        console.error("Error deleting user:", error);
-        toast.error("Ocurrió un error al eliminar el usuario");
-      }
+  const handleDeleteConfirm = async () => {
+    try {
+      await deleteUser(passenger.id);
+      toast.success("Pasajero y sus datos asociados fueron eliminados");
+      onUpdate();
+      onClose();
+    } catch (error) {
+      console.error("Error deleting user completely:", error);
+      toast.error("Ocurrió un error al eliminar el pasajero");
     }
   };
 
@@ -115,11 +165,49 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
                   error={touched.role && !!errors.role}
                   helperText={<ErrorMessage name="role" />}
                 />
+
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="subtitle2" fontWeight={600}>
+                  Estado de Correo Electrónico
+                </Typography>
+                {checkingEmail ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CircularProgress size={16} />
+                    <Typography variant="body2" color="textSecondary">Consultando estado...</Typography>
+                  </Box>
+                ) : emailStatus ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Chip
+                        label={emailStatus.isVerified ? "Verificado" : "No verificado"}
+                        color={emailStatus.isVerified ? "success" : "warning"}
+                        size="small"
+                      />
+                      {!emailStatus.isVerified && (
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={handleSendVerification}
+                          disabled={sendingVerification}
+                        >
+                          {sendingVerification ? "Enviando..." : "Enviar Correo de Verificación"}
+                        </Button>
+                      )}
+                    </Box>
+                    {emailStatus.isVerified && emailStatus.verifiedAt && (
+                      <Typography variant="caption" color="textSecondary">
+                        Verificado el: {new Date(emailStatus.verifiedAt).toLocaleString()}
+                      </Typography>
+                    )}
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="textSecondary">No se pudo verificar el estado</Typography>
+                )}
               </Box>
             </DialogContent>
             <DialogActions>
               <Button onClick={onClose}>Cancelar</Button>
-              <Button color="error" onClick={handleDelete}>
+              <Button color="error" onClick={() => setIsConfirmOpen(true)}>
                 Eliminar Usuario
               </Button>
               <Button type="submit" variant="contained" color="primary">
@@ -129,6 +217,13 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
           </Form>
         )}
       </Formik>
+      <DeleteConfirmationDialog
+        open={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={handleDeleteConfirm}
+        itemName={`${passenger.firstName || ''} ${passenger.lastName || ''}`.trim()}
+        itemType="pasajero"
+      />
     </Dialog>
   );
 };
