@@ -10,6 +10,8 @@ import {
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateRider, deleteRider } from "@/utils/rider";
+import { updateDriver } from "@/utils/driver";
+import { updateUser } from "@/utils/user";
 import { Rider } from "./ListRiders";
 import toast from "react-hot-toast";
 
@@ -37,14 +39,32 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
 
   const handleUpdate = async (values: Rider) => {
     try {
-      // We only update a subset of fields
-      const dataToUpdate: Partial<Rider> = {
+      // 1. Update Realtime Database (RTDB) for live status/tracking
+      const rtdbData: Partial<Rider> = {
         driverName: values.driverName,
         licensePlate: values.licensePlate,
         status: values.status,
         phoneNumber: values.phoneNumber,
       };
-      await updateRider(rider.driverId, dataToUpdate);
+      await updateRider(rider.driverId, rtdbData);
+
+      // 2. Update Firestore 'drivers' collection (persistent profile)
+      await updateDriver(rider.driverId, {
+        licensePlate: values.licensePlate,
+        phoneNumber: values.phoneNumber,
+      });
+
+      // 3. Update Firestore 'users' collection (first and last name) if userId is present
+      if (rider.userId) {
+        const nameParts = values.driverName.trim().split(/\s+/);
+        const firstName = nameParts[0] || "";
+        const lastName = nameParts.slice(1).join(" ");
+        await updateUser(rider.userId, {
+          firstName,
+          lastName,
+        });
+      }
+
       toast.success("Cambios guardados correctamente");
       onUpdate();
       onClose();

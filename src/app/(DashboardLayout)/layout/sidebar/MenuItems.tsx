@@ -9,7 +9,7 @@ import {
 } from "@tabler/icons-react";
 
 import { uniqueId } from "lodash";
-
+ 
 const Menuitems = [
   {
     navlabel: true,
@@ -28,7 +28,7 @@ const Menuitems = [
   },
   {
     id: uniqueId(),
-    title: "Activos",
+    title: "Verificados",
     icon: IconCar,
     href: "/ActiveRiders",
   },

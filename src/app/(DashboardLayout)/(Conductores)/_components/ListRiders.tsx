@@ -22,6 +22,7 @@ import { Driver } from './Riders';
 
 export interface Rider {
     driverId: string;
+    userId?: string;
     driverName: string;
     isActive: boolean;
     lastStatusUpdate: number;
@@ -176,6 +177,7 @@ const ListRiders = () => {
                 return {
                     ...activeData,
                     driverId: driver.uid,
+                    userId: driver.userId,
                     driverName: activeData.driverName || driverName,
                     profilePhoto: activeData.profilePhoto || driver.profileImageUrl || "",
                     vehicleBrand: driver.vehicleBrand || "N/A",
@@ -185,6 +187,7 @@ const ListRiders = () => {
             } else {
                 return {
                     driverId: driver.uid,
+                    userId: driver.userId,
                     driverName: driverName,
                     isActive: false,
                     lastStatusUpdate: 0,
@@ -238,7 +241,7 @@ const ListRiders = () => {
 
     return (
         <>
-            <DashboardCard title="Conductores Activos">
+            <DashboardCard title="Conductores Verificados">
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
                         aria-label="simple table"

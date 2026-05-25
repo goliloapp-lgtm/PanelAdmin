@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { login } from "@/utils/auth";
-import { getUserRole } from "@/utils/user"; // Debes crear esta función
+import { login, logout, loginWithGoogle } from "@/utils/auth";
+import { isUserAdmin } from "@/utils/adminCheck";
 import { useRouter } from "next/navigation";
+
 import {
   Box,
   Typography,
@@ -10,7 +11,9 @@ import {
   Button,
   Stack,
   Checkbox,
+  Divider,
 } from "@mui/material";
+import { IconBrandGoogle } from "@tabler/icons-react";
 import Link from "next/link";
 
 import CustomTextField from "@/app/(DashboardLayout)/components/forms/theme-elements/CustomTextField";
@@ -28,23 +31,43 @@ const AuthLogin = ({ title, subtitle, subtext }: loginType) => {
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  setError("");
-  try {
-    const userCredential = await login(email, password);
-    const uid = userCredential.user.uid;
-    const role = await getUserRole(uid);
-    console.log("User role:", role);
-    if (role === "admin") {
-      // Redirige o muestra éxito
-    router.push("/");
-    } else {
-      setError("Solo los administradores pueden iniciar sesión.");
+    e.preventDefault();
+    setError("");
+    try {
+      const userCredential = await login(email, password);
+      const uid = userCredential.user.uid;
+      const isAdmin = await isUserAdmin(uid);
+      console.log("Is user admin:", isAdmin);
+      if (isAdmin) {
+        router.push("/");
+      } else {
+        await logout();
+        setError("Solo los administradores pueden iniciar sesión.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al iniciar sesión");
     }
-  } catch (err: any) {
-    setError(err.message || "Error al iniciar sesión");
-  }
-};
+  };
+
+  const handleGoogleLogin = async () => {
+    setError("");
+    try {
+      const userCredential = await loginWithGoogle();
+      const uid = userCredential.user.uid;
+      const isAdmin = await isUserAdmin(uid);
+      console.log("Is user admin (Google):", isAdmin);
+      if (isAdmin) {
+        router.push("/");
+      } else {
+        await logout();
+        setError("Solo los administradores pueden iniciar sesión.");
+      }
+    } catch (err: any) {
+      if (err.code !== 'auth/popup-closed-by-user') {
+        setError(err.message || "Error al iniciar sesión con Google");
+      }
+    }
+  };
 
   return (
     <>
@@ -134,9 +157,37 @@ const AuthLogin = ({ title, subtitle, subtext }: loginType) => {
           >
             Iniciar Sesión
           </Button>
-          {error && <Typography color="error">{error}</Typography>}
+          {error && <Typography color="error" sx={{ mt: 1 }}>{error}</Typography>}
         </Box>
       </form>
+
+      <Box sx={{ my: 3, display: 'flex', alignItems: 'center' }}>
+        <Divider sx={{ flexGrow: 1 }} />
+        <Typography variant="body2" sx={{ mx: 2, color: 'text.secondary' }}>
+          o
+        </Typography>
+        <Divider sx={{ flexGrow: 1 }} />
+      </Box>
+
+      <Button
+        variant="outlined"
+        color="inherit"
+        fullWidth
+        size="large"
+        startIcon={<IconBrandGoogle />}
+        onClick={handleGoogleLogin}
+        sx={{
+          textTransform: 'none',
+          borderColor: 'divider',
+          fontWeight: 500,
+          '&:hover': {
+            backgroundColor: 'rgba(0, 0, 0, 0.04)',
+          }
+        }}
+      >
+        Iniciar Sesión con Google
+      </Button>
+
       {subtitle}
     </>
   );
