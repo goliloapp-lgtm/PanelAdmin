@@ -7,6 +7,7 @@ import {
   IconCar,
   IconUserExclamation,
   IconSettings,
+  IconUserShield,
 } from "@tabler/icons-react";
 
 import { uniqueId } from "lodash";
@@ -54,6 +55,12 @@ const Menuitems = [
     title: "De Baja",
     icon: IconUserExclamation,
     href: "/OffPassengers",
+  },
+  {
+    id: uniqueId(),
+    title: "Empleados",
+    icon: IconUserShield,
+    href: "/Employees",
   },
   {
     navlabel: true,

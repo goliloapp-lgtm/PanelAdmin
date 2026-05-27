@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
 import {
     Typography, Box,
@@ -8,47 +8,48 @@ import {
     TableCell,
     TableHead,
     TableRow,
-    Chip,
     Button,
     TableSortLabel,
-    TablePagination
+    TablePagination,
+    Chip
 } from '@mui/material';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
-import EditPassengerModal from '../../components/dashboard/EditPassengerModal';
+import EditEmployeeModal from './EditEmployeeModal';
 
-export interface Passenger {
+export interface Employee {
     id: string;
     email: string;
     firstName: string;
     isActive: boolean;
     lastName: string;
     phone: string;
-    role: string;
+    roleId: string;
+    roleName: string;
 }
 
 type Order = 'asc' | 'desc';
 
-const ListPassengers = () => {
-    const [passengers, setPassengers] = useState<Passenger[]>([]);
+const ListEmployees = () => {
+    const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
-    const [selectedPassenger, setSelectedPassenger] = useState<Passenger | null>(null);
+    const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [order, setOrder] = useState<Order>('asc');
-    const [orderBy, setOrderBy] = useState<keyof Passenger>('firstName');
+    const [orderBy, setOrderBy] = useState<keyof Employee>('firstName');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
 
-    const handleOpenModal = (passenger: Passenger) => {
-        setSelectedPassenger(passenger);
+    const handleOpenModal = (employee: Employee) => {
+        setSelectedEmployee(employee);
         setIsModalOpen(true);
     };
 
     const handleCloseModal = () => {
-        setSelectedPassenger(null);
+        setSelectedEmployee(null);
         setIsModalOpen(false);
     };
 
-    const handleRequestSort = (property: keyof Passenger) => {
+    const handleRequestSort = (property: keyof Employee) => {
         const isAsc = orderBy === property && order === 'asc';
         setOrder(isAsc ? 'desc' : 'asc');
         setOrderBy(property);
@@ -63,75 +64,95 @@ const ListPassengers = () => {
         setPage(0);
     };
 
-    const fetchPassengers = async () => {
+    const fetchEmployees = async () => {
         setLoading(true);
         try {
             const db = getFirestore(firebaseApp);
-            const usersCollectionRef = collection(db, "users");
-            const q = query(usersCollectionRef, where("isActive", "==", true));
-            const querySnapshot = await getDocs(q);
-
-            const fetchedPassengers: Passenger[] = [];
-            querySnapshot.forEach((doc) => {
+            
+            // 1. Fetch all roles to create a mapping of roleId -> roleName
+            const rolesSnapshot = await getDocs(collection(db, "roles"));
+            const rolesMap: Record<string, string> = {};
+            rolesSnapshot.forEach((doc) => {
                 const data = doc.data();
-                fetchedPassengers.push({
-                    id: doc.id,
-                    email: data.email || "N/A",
-                    firstName: data.firstName || "N/A",
-                    isActive: data.isActive || false,
-                    lastName: data.lastName || "N/A",
-                    phone: data.phone || "N/A",
-                    role: data.role || "N/A",
-                });
+                rolesMap[doc.id] = data.name || doc.id;
             });
-            setPassengers(fetchedPassengers);
+
+            // 2. Fetch all users
+            const usersSnapshot = await getDocs(collection(db, "users"));
+            const fetchedEmployees: Employee[] = [];
+
+            usersSnapshot.forEach((doc) => {
+                const data = doc.data();
+                const roleValue = data.role;
+
+                // Only include users who have a role assigned
+                if (roleValue && roleValue !== "" && roleValue !== "N/A" && roleValue !== "passenger") {
+                    const resolvedRoleName = rolesMap[roleValue] || roleValue;
+                    
+                    fetchedEmployees.push({
+                        id: doc.id,
+                        email: data.email || "N/A",
+                        firstName: data.firstName || "N/A",
+                        isActive: data.isActive || false,
+                        lastName: data.lastName || "N/A",
+                        phone: data.phone || "N/A",
+                        roleId: roleValue,
+                        roleName: resolvedRoleName,
+                    });
+                }
+            });
+
+            setEmployees(fetchedEmployees);
         } catch (error) {
-            console.error("Error fetching passengers:", error);
+            console.error("Error fetching employees:", error);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchPassengers();
+        fetchEmployees();
     }, []);
 
     const handleUpdateList = () => {
-        fetchPassengers();
+        fetchEmployees();
     };
 
-    const sortedPassengers = useMemo(() => {
-        const comparator = (a: Passenger, b: Passenger) => {
-            if (b[orderBy] < a[orderBy]) {
+    const sortedEmployees = useMemo(() => {
+        const comparator = (a: Employee, b: Employee) => {
+            const valA = a[orderBy] || '';
+            const valB = b[orderBy] || '';
+
+            if (valB < valA) {
                 return order === 'asc' ? 1 : -1;
             }
-            if (b[orderBy] > a[orderBy]) {
+            if (valB > valA) {
                 return order === 'asc' ? -1 : 1;
             }
             return 0;
         };
-        return [...passengers].sort(comparator);
-    }, [passengers, order, orderBy]);
+        return [...employees].sort(comparator);
+    }, [employees, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
-            sortedPassengers.slice(
+            sortedEmployees.slice(
                 page * rowsPerPage,
                 page * rowsPerPage + rowsPerPage,
             ),
-        [sortedPassengers, page, rowsPerPage],
+        [sortedEmployees, page, rowsPerPage],
     );
 
     if (loading) {
-        return <Typography>Cargando pasajeros...</Typography>;
+        return <Typography sx={{ p: 2 }}>Cargando empleados...</Typography>;
     }
 
     return (
         <>
-            <DashboardCard title="Pasajeros activos">
+            <DashboardCard title="Empleados Registrados">
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
-                        aria-label="simple table"
+                        aria-label="employees table"
                         sx={{
                             whiteSpace: "nowrap",
                             mt: 2
@@ -177,6 +198,17 @@ const ListPassengers = () => {
                                         Teléfono
                                     </Typography>
                                 </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={orderBy === 'roleName'}
+                                        direction={orderBy === 'roleName' ? order : 'asc'}
+                                        onClick={() => handleRequestSort('roleName')}
+                                    >
+                                        <Typography variant="subtitle2" fontWeight={600}>
+                                            Rol
+                                        </Typography>
+                                    </TableSortLabel>
+                                </TableCell>
                                 <TableCell align="right">
                                     <Typography variant="subtitle2" fontWeight={600}>
                                         Acciones
@@ -185,68 +217,73 @@ const ListPassengers = () => {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {visibleRows.map((passenger) => (
-                                <TableRow key={passenger.id}>
+                            {visibleRows.map((emp) => (
+                                <TableRow key={emp.id}>
                                     <TableCell>
                                         <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {passenger.email}
+                                            {emp.email}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
-                                        <Box
-                                            sx={{
-                                                display: "flex",
-                                                alignItems: "center",
-                                            }}
-                                        >
-                                            <Box>
-                                                <Typography variant="subtitle2" fontWeight={600}>
-                                                    {passenger.firstName}
-                                                </Typography>
-
-                                            </Box>
-                                        </Box>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {passenger.lastName}
+                                        <Typography variant="subtitle2" fontWeight={600}>
+                                            {emp.firstName}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
                                         <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {passenger.phone}
+                                            {emp.lastName}
                                         </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
+                                            {emp.phone}
+                                        </Typography>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Chip
+                                            label={emp.roleName.toUpperCase()}
+                                            color="primary"
+                                            variant="outlined"
+                                            size="small"
+                                        />
                                     </TableCell>
                                     <TableCell align="right">
-                                        <Button variant="contained" color="primary" onClick={() => handleOpenModal(passenger)}>
-                                            Editar
+                                        <Button variant="contained" color="primary" onClick={() => handleOpenModal(emp)}>
+                                            Editar Rol
                                         </Button>
                                     </TableCell>
                                 </TableRow>
                             ))}
+                            {visibleRows.length === 0 && (
+                                <TableRow>
+                                    <TableCell colSpan={6} align="center">
+                                        <Typography sx={{ py: 3 }} color="textSecondary">
+                                            No hay empleados registrados en el sistema.
+                                        </Typography>
+                                    </TableCell>
+                                </TableRow>
+                            )}
                         </TableBody>
                     </Table>
                 </Box>
                 <TablePagination
                     rowsPerPageOptions={[5, 10, 25]}
                     component="div"
-                    count={passengers.length}
+                    count={employees.length}
                     rowsPerPage={rowsPerPage}
                     page={page}
                     onPageChange={handleChangePage}
                     onRowsPerPageChange={handleChangeRowsPerPage}
                 />
             </DashboardCard>
-            {selectedPassenger && (
-                <EditPassengerModal
-                    open={isModalOpen}
-                    onClose={handleCloseModal}
-                    passenger={selectedPassenger}
-                    onUpdate={handleUpdateList}
-                />
-            )}
+            <EditEmployeeModal
+                open={isModalOpen}
+                onClose={handleCloseModal}
+                employee={selectedEmployee}
+                onUpdate={handleUpdateList}
+            />
         </>
     );
 };
 
-export default ListPassengers;
+export default ListEmployees;

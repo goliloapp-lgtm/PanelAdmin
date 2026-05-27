@@ -36,7 +36,6 @@ const validationSchema = Yup.object({
   lastName: Yup.string().required("El apellido es requerido"),
   email: Yup.string().email("Email inválido").required("El email es requerido"),
   phone: Yup.string().required("El teléfono es requerido"),
-  role: Yup.string().required("El rol es requerido"),
 });
 
 const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
@@ -157,14 +156,7 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
                   error={touched.phone && !!errors.phone}
                   helperText={<ErrorMessage name="phone" />}
                 />
-                <Field
-                  name="role"
-                  as={TextField}
-                  label="Rol"
-                  fullWidth
-                  error={touched.role && !!errors.role}
-                  helperText={<ErrorMessage name="role" />}
-                />
+
 
                 <Divider sx={{ my: 1 }} />
                 <Typography variant="subtitle2" fontWeight={600}>

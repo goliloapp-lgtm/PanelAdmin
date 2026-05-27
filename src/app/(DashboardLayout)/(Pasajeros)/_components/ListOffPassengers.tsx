@@ -179,11 +179,6 @@ const ListOffPassengers = () => {
                                 </TableCell>
                                 <TableCell align="right">
                                     <Typography variant="subtitle2" fontWeight={600}>
-                                        Rol
-                                    </Typography>
-                                </TableCell>
-                                <TableCell align="right">
-                                    <Typography variant="subtitle2" fontWeight={600}>
                                         Acciones
                                     </Typography>
                                 </TableCell>
@@ -221,9 +216,6 @@ const ListOffPassengers = () => {
                                         <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
                                             {passenger.phone}
                                         </Typography>
-                                    </TableCell>
-                                    <TableCell align="right">
-                                        <Typography variant="h6">{passenger.role}</Typography>
                                     </TableCell>
                                     <TableCell align="right">
                                         <Button variant="contained" color="primary" onClick={() => handleOpenModal(passenger)}>
