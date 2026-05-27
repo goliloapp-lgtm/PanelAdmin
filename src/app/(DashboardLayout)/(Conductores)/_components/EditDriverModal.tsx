@@ -249,11 +249,10 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                   <Grid container spacing={2}>
                     {[
                       { src: driver.profileImageUrl, label: "Perfil" },
-                      { src: driver.dniImageUrl, label: "DNI" },
                       { src: driver.licenseImageUrl, label: "Licencia" },
                       { src: driver.criminalRecordImageUrl, label: "Antecedentes" },
                     ].map((img, index) => (
-                      <Grid size={{ xs: 6, sm: 3 }} key={index}>
+                      <Grid size={{ xs: 6, sm: 4 }} key={index}>
                         <Typography variant="caption" align="center" component="div">{img.label}</Typography>
                         <Card>
                           <CardMedia

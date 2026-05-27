@@ -150,16 +150,18 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
                   error={touched.phoneNumber && !!errors.phoneNumber}
                   helperText={<ErrorMessage name="phoneNumber" />}
                 />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={values.isConductorActive}
-                      onChange={(e) => setFieldValue('isConductorActive', e.target.checked)}
-                      name="isConductorActive"
-                    />
-                  }
-                  label="Conductor Activo"
-                />
+                {rider.isConductorActive && (
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={values.isConductorActive}
+                        onChange={(e) => setFieldValue('isConductorActive', e.target.checked)}
+                        name="isConductorActive"
+                      />
+                    }
+                    label="Conductor Activo"
+                  />
+                )}
               </Box>
             </DialogContent>
             <DialogActions>
