@@ -155,7 +155,12 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
                     control={
                       <Switch
                         checked={values.isConductorActive}
-                        onChange={(e) => setFieldValue('isConductorActive', e.target.checked)}
+                        onChange={(e) => {
+                          if (!e.target.checked) {
+                            setFieldValue('isConductorActive', false);
+                          }
+                        }}
+                        disabled={!values.isConductorActive}
                         name="isConductorActive"
                       />
                     }
