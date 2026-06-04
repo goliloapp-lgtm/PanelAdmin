@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getDatabase, ref, onValue } from 'firebase/database';
+import { getFirestore, collection, query, where, onSnapshot } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
 import { getUser } from '@/utils/user';
 import {
@@ -70,43 +70,61 @@ const ViajesTable = () => {
     };
 
     useEffect(() => {
-        const db = getDatabase(firebaseApp);
-        const tripsRef = ref(db, 'rideRequests');
+        const db = getFirestore(firebaseApp);
+        const tripsQuery = query(collection(db, 'historyTrips'), where('status', '==', 'completed'));
 
-        const unsubscribe = onValue(tripsRef, (snapshot) => {
+        const unsubscribe = onSnapshot(tripsQuery, (snapshot) => {
             setLoading(true);
-            const data = snapshot.val();
-            console.log("Raw data from rideRequest:", data);
-
             const processTrips = async () => {
-                if (data) {
-                    const fetchedTrips: Trip[] = Object.values(data)
-                        .filter((trip: any) => trip.status === 'completed')
-                        .map((trip: any) => ({
-                            ...trip,
-                        }));
-                    
-                    const tripsWithCustomerInfo = await Promise.all(
-                        fetchedTrips.map(async (trip) => {
-                            const userData = await getUser(trip.userId);
-                            return {
-                                ...trip,
-                                customerName: userData?.firstName,
-                                customerLastName: userData?.lastName,
-                            };
-                        })
-                    );
+                const fetchedTrips: any[] = [];
+                snapshot.forEach((doc) => {
+                    fetchedTrips.push({ id: doc.id, ...doc.data() });
+                });
 
-                    console.log("Filtered completed trips:", tripsWithCustomerInfo);
-                    setTrips(tripsWithCustomerInfo);
-                } else {
-                    setTrips([]);
-                }
+                const tripsWithCustomerInfo = await Promise.all(
+                    fetchedTrips.map(async (trip) => {
+                        const userId = trip.passengerId || trip.userId;
+                        const userData = userId ? await getUser(userId) : null;
+                        
+                        const farePriceCents = trip.originalPrice !== undefined 
+                            ? Math.round(Number(trip.originalPrice) * 100) 
+                            : (trip.farePriceCents !== undefined ? Number(trip.farePriceCents) : 0);
+
+                        const paymentStatus = trip.paymentStatus || (trip.paid ? 'succeeded' : 'pending');
+
+                        const getTimestamp = (t: any) => {
+                            const rawDate = t.createdAt || t.updatedAt || t.completedAt || t.startedAt;
+                            if (!rawDate) return Date.now();
+                            if (rawDate.toDate && typeof rawDate.toDate === 'function') {
+                                return rawDate.toDate().getTime();
+                            }
+                            if (rawDate.seconds !== undefined) {
+                                return rawDate.seconds * 1000;
+                            }
+                            if (typeof rawDate === 'string') {
+                                return new Date(rawDate).getTime();
+                            }
+                            return Number(rawDate);
+                        };
+
+                        return {
+                            ...trip,
+                            farePriceCents,
+                            paymentStatus,
+                            updatedAt: getTimestamp(trip),
+                            customerName: userData?.firstName || trip.passengerName || 'Pasajero',
+                            customerLastName: userData?.lastName || '',
+                        };
+                    })
+                );
+
+                console.log("Filtered completed trips from Firestore:", tripsWithCustomerInfo);
+                setTrips(tripsWithCustomerInfo);
                 setLoading(false);
             };
             processTrips();
         }, (error) => {
-            console.error("Error fetching trips:", error);
+            console.error("Error fetching trips from Firestore:", error);
             setLoading(false);
         });
 
