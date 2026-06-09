@@ -49,7 +49,7 @@ type Order = 'asc' | 'desc';
 const ViajesCanceladosTable = () => {
     const [trips, setTrips] = useState<TripWithCustomerInfo[]>([]);
     const [loading, setLoading] = useState(true);
-    const [order, setOrder] = useState<Order>('asc');
+    const [order, setOrder] = useState<Order>('desc');
     const [orderBy, setOrderBy] = useState<keyof Trip>('updatedAt');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -71,7 +71,8 @@ const ViajesCanceladosTable = () => {
 
     useEffect(() => {
         const db = getFirestore(firebaseApp);
-        const tripsQuery = query(collection(db, 'historyTrips'), where('status', 'in', ['cancelled', 'canceled']));
+        // Fetch all history trips and filter cancelled trips client-side to handle legacy/new data
+        const tripsQuery = query(collection(db, 'historyTrips'));
 
         const unsubscribe = onSnapshot(tripsQuery, (snapshot) => {
             setLoading(true);
@@ -81,8 +82,19 @@ const ViajesCanceladosTable = () => {
                     fetchedTrips.push({ id: doc.id, ...doc.data() });
                 });
 
+                // Filter for cancelled trips
+                const cancelledTrips = fetchedTrips.filter((trip) => {
+                    const status = trip.status?.toLowerCase();
+                    if (status) {
+                        return status === 'cancelled' || status === 'canceled';
+                    }
+                    // Legacy fallback: if no status and doesn't have any completion indicators, consider cancelled
+                    const isCompleted = !!trip.completedAt || !!trip.rating || !!trip.reviewTimestamp || !!trip.paid;
+                    return !isCompleted;
+                });
+
                 const tripsWithCustomerInfo = await Promise.all(
-                    fetchedTrips.map(async (trip) => {
+                    cancelledTrips.map(async (trip) => {
                         const userId = trip.passengerId || trip.userId;
                         const userData = userId ? await getUser(userId) : null;
                         
@@ -93,7 +105,7 @@ const ViajesCanceladosTable = () => {
                         const paymentStatus = trip.paymentStatus || (trip.paid ? 'succeeded' : 'pending');
 
                         const getTimestamp = (t: any) => {
-                            const rawDate = t.createdAt || t.updatedAt || t.completedAt || t.startedAt;
+                            const rawDate = t.createdAt || t.updatedAt || t.completedAt || t.startedAt || t.reviewTimestamp;
                             if (!rawDate) return Date.now();
                             if (rawDate.toDate && typeof rawDate.toDate === 'function') {
                                 return rawDate.toDate().getTime();

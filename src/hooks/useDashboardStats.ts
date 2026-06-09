@@ -53,8 +53,8 @@ export function useDashboardStats() {
         const db = getFirestore(firebaseApp);
         const rtdb = getDatabase(firebaseApp);
 
-        // 1. Fetch collections
-        const tripsSnap = await getDocs(query(collection(db, "historyTrips"), orderBy("createdAt", "desc")));
+        // 1. Fetch collections (no orderBy on historyTrips to prevent Firestore from omitting docs without 'createdAt')
+        const tripsSnap = await getDocs(collection(db, "historyTrips"));
         const usersSnap = await getDocs(collection(db, "users"));
         const driversSnap = await getDocs(collection(db, "drivers"));
         const activeDriversSnap = await get(ref(rtdb, "conductores_activos"));
@@ -70,10 +70,28 @@ export function useDashboardStats() {
           driversMap[doc.id] = doc.data();
         });
 
+        const getTimestamp = (t: any) => {
+          const rawDate = t.createdAt || t.updatedAt || t.completedAt || t.startedAt || t.reviewTimestamp;
+          if (!rawDate) return Date.now();
+          if (rawDate.toDate && typeof rawDate.toDate === 'function') {
+            return rawDate.toDate().getTime();
+          }
+          if (rawDate.seconds !== undefined) {
+            return rawDate.seconds * 1000;
+          }
+          if (typeof rawDate === 'string') {
+            return new Date(rawDate).getTime();
+          }
+          return Number(rawDate);
+        };
+
         const trips: any[] = [];
         tripsSnap.forEach((doc) => {
           trips.push({ id: doc.id, ...doc.data() });
         });
+
+        // Sort trips in memory descending by date (most recent first)
+        trips.sort((a, b) => getTimestamp(b) - getTimestamp(a));
 
         // 2. Process RTDB active drivers
         const activeDriversVal = activeDriversSnap.val();
@@ -158,7 +176,7 @@ export function useDashboardStats() {
         // Group by date string (DD/MM)
         const dailyStats: Record<string, { sales: number; commission: number }> = {};
         chronoTrips.forEach((trip) => {
-          const date = trip.createdAt?.toDate ? trip.createdAt.toDate() : new Date(trip.createdAt?.seconds * 1000 || trip.createdAt || Date.now());
+          const date = new Date(getTimestamp(trip));
           const dateStr = `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}`;
           
           const price = Number(trip.originalPrice || 0);
@@ -190,7 +208,7 @@ export function useDashboardStats() {
 
         // Process overall metrics
         trips.forEach((trip) => {
-          const date = trip.createdAt?.toDate ? trip.createdAt.toDate() : new Date(trip.createdAt?.seconds * 1000 || trip.createdAt || Date.now());
+          const date = new Date(getTimestamp(trip));
           const yr = date.getFullYear();
           const mo = date.getMonth();
           
@@ -226,7 +244,7 @@ export function useDashboardStats() {
         // Recent transactions from recent trips
         const colors = ["primary", "secondary", "success", "warning", "error"];
         const recentTransactions = trips.slice(0, 6).map((trip, idx) => {
-          const date = trip.createdAt?.toDate ? trip.createdAt.toDate() : new Date(trip.createdAt?.seconds * 1000 || trip.createdAt || Date.now());
+          const date = new Date(getTimestamp(trip));
           const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
           
           const passenger = trip.passengerName || "Pasajero";
