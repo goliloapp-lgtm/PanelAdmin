@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { auth, logout } from "@/utils/auth";
-import { isUserAdmin } from "@/utils/adminCheck";
+import { hasDashboardAccess } from "@/utils/adminCheck";
 import toast from "react-hot-toast";
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -14,7 +14,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const unsubscribe = auth.onAuthStateChanged(async (user) => {
       if (user) {
         try {
-          const adminStatus = await isUserAdmin(user.uid);
+          const adminStatus = await hasDashboardAccess(user.uid);
           if (adminStatus) {
             setIsAuth(true);
           } else {

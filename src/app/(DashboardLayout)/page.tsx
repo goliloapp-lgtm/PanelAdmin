@@ -1,7 +1,7 @@
 'use client'
 import React from 'react';
 import AuthGuard from './components/AuthGuard';
-import { Grid, Box, Typography, CircularProgress } from '@mui/material';
+import { Grid, Box, Typography, CircularProgress, Stack, Avatar } from '@mui/material';
 import PageContainer from '@/app/(DashboardLayout)/components/container/PageContainer';
 // components
 import SalesOverview from '@/app/(DashboardLayout)/components/dashboard/SalesOverview';
@@ -9,7 +9,9 @@ import YearlyBreakup from '@/app/(DashboardLayout)/components/dashboard/YearlyBr
 import RecentTransactions from '@/app/(DashboardLayout)/components/dashboard/RecentTransactions';
 import ProductPerformance from '@/app/(DashboardLayout)/components/dashboard/ProductPerformance';
 import MonthlyEarnings from '@/app/(DashboardLayout)/components/dashboard/MonthlyEarnings';
+import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCard';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
+import { IconCar, IconClock, IconCircleX, IconUserPlus } from '@tabler/icons-react';
 
 const Dashboard = () => {
   const stats = useDashboardStats();
@@ -27,6 +29,100 @@ const Dashboard = () => {
             </Box>
           ) : (
             <Grid container spacing={3}>
+              {/* Row 1: KPI Cards */}
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 6,
+                  lg: 3
+                }}>
+                <DashboardCard title="Conductores Activos">
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Avatar sx={{ bgcolor: 'primary.light', color: 'primary.main', width: 48, height: 48 }}>
+                      <IconCar stroke={1.5} size="1.8rem" />
+                    </Avatar>
+                    <Box>
+                      <Typography variant="h4" fontWeight="700">
+                        {stats.conductoresActivosCount}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        En línea ahora
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </DashboardCard>
+              </Grid>
+
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 6,
+                  lg: 3
+                }}>
+                <DashboardCard title="Espera Promedio">
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Avatar sx={{ bgcolor: 'success.light', color: 'success.main', width: 48, height: 48 }}>
+                      <IconClock stroke={1.5} size="1.8rem" />
+                    </Avatar>
+                    <Box>
+                      <Typography variant="h4" fontWeight="700">
+                        {stats.tiempoEsperaPromedio} min
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        Tiempo de respuesta
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </DashboardCard>
+              </Grid>
+
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 6,
+                  lg: 3
+                }}>
+                <DashboardCard title="Tasa de Cancelación">
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Avatar sx={{ bgcolor: 'error.light', color: 'error.main', width: 48, height: 48 }}>
+                      <IconCircleX stroke={1.5} size="1.8rem" />
+                    </Avatar>
+                    <Box>
+                      <Typography variant="h4" fontWeight="700">
+                        {stats.tasaCancelacion}%
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        Viajes cancelados
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </DashboardCard>
+              </Grid>
+
+              <Grid
+                size={{
+                  xs: 12,
+                  sm: 6,
+                  lg: 3
+                }}>
+                <DashboardCard title="Nuevos Usuarios">
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <Avatar sx={{ bgcolor: 'secondary.light', color: 'secondary.main', width: 48, height: 48 }}>
+                      <IconUserPlus stroke={1.5} size="1.8rem" />
+                    </Avatar>
+                    <Box>
+                      <Typography variant="h4" fontWeight="700">
+                        +{stats.nuevosUsuariosCount}
+                      </Typography>
+                      <Typography variant="caption" color="textSecondary">
+                        Últimos 30 días
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </DashboardCard>
+              </Grid>
+
+              {/* Row 2: Charts and Details */}
               <Grid
                 size={{
                   xs: 12,

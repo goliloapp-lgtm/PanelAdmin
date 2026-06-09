@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getFirestore, collection, getDocs, query, orderBy } from "firebase/firestore";
+import { getDatabase, ref, get } from "firebase/database";
 import { firebaseApp } from "@/utils/firebase";
 
 export interface DashboardStats {
@@ -14,6 +15,14 @@ export interface DashboardStats {
   driverPerformance: { id: string; name: string; car: string; performance: string; pbg: string; budget: string }[];
   monthlyEarningsChartData: number[];
   loading: boolean;
+  
+  // New metrics for limited dashboards
+  tasaCancelacion: number;
+  tiempoEsperaPromedio: number;
+  conductoresActivosCount: number;
+  nuevosUsuariosCount: number;
+  totalUsuariosCount: number;
+  totalConductoresCount: number;
 }
 
 export function useDashboardStats() {
@@ -29,17 +38,26 @@ export function useDashboardStats() {
     driverPerformance: [],
     monthlyEarningsChartData: [],
     loading: true,
+    
+    tasaCancelacion: 0,
+    tiempoEsperaPromedio: 0,
+    conductoresActivosCount: 0,
+    nuevosUsuariosCount: 0,
+    totalUsuariosCount: 0,
+    totalConductoresCount: 0,
   });
 
   useEffect(() => {
     async function fetchStats() {
       try {
         const db = getFirestore(firebaseApp);
+        const rtdb = getDatabase(firebaseApp);
 
         // 1. Fetch collections
         const tripsSnap = await getDocs(query(collection(db, "historyTrips"), orderBy("createdAt", "desc")));
         const usersSnap = await getDocs(collection(db, "users"));
         const driversSnap = await getDocs(collection(db, "drivers"));
+        const activeDriversSnap = await get(ref(rtdb, "conductores_activos"));
 
         // Build dictionaries for users and drivers
         const usersMap: Record<string, any> = {};
@@ -57,7 +75,29 @@ export function useDashboardStats() {
           trips.push({ id: doc.id, ...doc.data() });
         });
 
-        // 2. Process metrics
+        // 2. Process RTDB active drivers
+        const activeDriversVal = activeDriversSnap.val();
+        const conductoresActivosCount = activeDriversVal ? Object.keys(activeDriversVal).length : 0;
+
+        // 3. Process new and total users
+        const totalUsuariosCount = usersSnap.size;
+        const totalConductoresCount = driversSnap.size;
+
+        let nuevosUsuariosCount = 0;
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+        usersSnap.forEach((doc) => {
+          const uData = doc.data();
+          if (uData.createdAt) {
+            const createdDate = uData.createdAt.toDate ? uData.createdAt.toDate() : new Date(uData.createdAt);
+            if (createdDate >= thirtyDaysAgo) {
+              nuevosUsuariosCount++;
+            }
+          }
+        });
+
+        // 4. Process metrics from trips
         const now = new Date();
         const currentYear = now.getFullYear();
         const lastYear = currentYear - 1;
@@ -71,6 +111,45 @@ export function useDashboardStats() {
         let earningsLastMonth = 0;
         let totalDriverEarnings = 0;
         let totalLiloCommission = 0;
+
+        let completedCount = 0;
+        let cancelledCount = 0;
+        let totalWaitTimeMs = 0;
+        let countWithWaitTime = 0;
+
+        trips.forEach((trip) => {
+          const status = trip.status?.toLowerCase();
+          
+          if (status === 'completed' || (!status && trip.completedAt)) {
+            completedCount++;
+          } else if (status === 'cancelled' || status === 'canceled') {
+            cancelledCount++;
+          }
+
+          if (trip.startedAt && trip.createdAt) {
+            const createdMs = trip.createdAt.seconds 
+              ? trip.createdAt.seconds * 1000 
+              : (trip.createdAt.toDate ? trip.createdAt.toDate().getTime() : new Date(trip.createdAt).getTime());
+            const startedMs = Number(trip.startedAt);
+            
+            if (startedMs > createdMs) {
+              const diffMs = startedMs - createdMs;
+              if (diffMs > 0 && diffMs < 2 * 60 * 60 * 1000) {
+                totalWaitTimeMs += diffMs;
+                countWithWaitTime++;
+              }
+            }
+          }
+        });
+
+        const totalTrips = completedCount + cancelledCount;
+        const tasaCancelacion = totalTrips > 0
+          ? Number(((cancelledCount / totalTrips) * 100).toFixed(1))
+          : 0;
+
+        const tiempoEsperaPromedio = countWithWaitTime > 0
+          ? Number((totalWaitTimeMs / countWithWaitTime / (60 * 1000)).toFixed(1))
+          : 8.5; // default fallback wait time in minutes
 
         // Daily aggregation for the last 8 days of activity (or last 8 trips)
         // Let's sort trips chronologically to get daily stats for the overview chart
@@ -232,6 +311,13 @@ export function useDashboardStats() {
           ],
           monthlyEarningsChartData: monthlyEarningsChartData.length > 0 ? monthlyEarningsChartData : [25, 66, 20, 40, 12, 58, 20],
           loading: false,
+          
+          tasaCancelacion,
+          tiempoEsperaPromedio,
+          conductoresActivosCount,
+          nuevosUsuariosCount,
+          totalUsuariosCount,
+          totalConductoresCount,
         });
 
       } catch (error) {

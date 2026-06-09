@@ -1,19 +1,45 @@
 'use client';
-import { Typography } from '@mui/material';
+import React from 'react';
 import PageContainer from '@/app/(DashboardLayout)/components/container/PageContainer';
-import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCard';
 import ListOffPassengers from '../_components/ListOffPassengers';
+import AuthGuard from '../../components/AuthGuard';
+import { useAdmin } from '@/hooks/useAdmin';
+import { CircularProgress, Box, Typography } from '@mui/material';
 
+const InactivePassengersPage = () => {
+  const { roleName, isLoading } = useAdmin();
 
-const SamplePage = () => {
+  if (isLoading) {
+    return (
+      <AuthGuard>
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
+          <CircularProgress />
+        </Box>
+      </AuthGuard>
+    );
+  }
+
+  const isOperaciones = roleName?.toLowerCase() === 'operaciones';
+
   return (
-    <PageContainer title="Not Active Passengers" description="Passengers with not active status">
-     
-        <ListOffPassengers />
-      
-    </PageContainer>
+    <AuthGuard>
+      <PageContainer title="Pasajeros Inactivos" description="Listado de pasajeros inactivos/de baja">
+        {!isOperaciones ? (
+          <ListOffPassengers />
+        ) : (
+          <Box sx={{ p: 4, textAlign: 'center' }}>
+            <Typography variant="h5" color="error" gutterBottom>
+              Acceso Denegado
+            </Typography>
+            <Typography variant="body1" color="textSecondary">
+              Esta sección no está disponible para su rol de usuario.
+            </Typography>
+          </Box>
+        )}
+      </PageContainer>
+    </AuthGuard>
   );
 };
 
-export default SamplePage;
+export default InactivePassengersPage;
 

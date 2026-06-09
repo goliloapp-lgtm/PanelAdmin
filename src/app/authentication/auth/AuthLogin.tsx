@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { login, logout, loginWithGoogle } from "@/utils/auth";
-import { isUserAdmin } from "@/utils/adminCheck";
+import { hasDashboardAccess } from "@/utils/adminCheck";
 import { useRouter } from "next/navigation";
 
 import {
@@ -115,13 +115,13 @@ const AuthLogin = ({ title, subtitle, subtext }: loginType) => {
     try {
       const userCredential = await login(email, password);
       const uid = userCredential.user.uid;
-      const isAdmin = await isUserAdmin(uid);
-      console.log("Is user admin:", isAdmin);
-      if (isAdmin) {
+      const isAuthorized = await hasDashboardAccess(uid);
+      console.log("Is user authorized:", isAuthorized);
+      if (isAuthorized) {
         router.push("/");
       } else {
         await logout();
-        setError("Solo los administradores pueden iniciar sesión.");
+        setError("Acceso denegado: Rol no autorizado.");
       }
     } catch (err: any) {
       setError(err.message || "Error al iniciar sesión");
@@ -133,13 +133,13 @@ const AuthLogin = ({ title, subtitle, subtext }: loginType) => {
     try {
       const userCredential = await loginWithGoogle();
       const uid = userCredential.user.uid;
-      const isAdmin = await isUserAdmin(uid);
-      console.log("Is user admin (Google):", isAdmin);
-      if (isAdmin) {
+      const isAuthorized = await hasDashboardAccess(uid);
+      console.log("Is user authorized (Google):", isAuthorized);
+      if (isAuthorized) {
         router.push("/");
       } else {
         await logout();
-        setError("Solo los administradores pueden iniciar sesión.");
+        setError("Acceso denegado: Rol no autorizado.");
       }
     } catch (err: any) {
       if (err.code !== 'auth/popup-closed-by-user') {

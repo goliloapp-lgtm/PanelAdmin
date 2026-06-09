@@ -83,3 +83,24 @@ export async function getUserRole(uid: string): Promise<{ name: string; descript
     return null;
   }
 }
+
+/**
+ * Checks if the user with the given UID is authorized to access the dashboard.
+ * Authorized roles are: 'admin', 'operaciones', 'atencion_cliente'.
+ * 
+ * @param uid User identifier
+ * @returns boolean indicating if the user has dashboard access
+ */
+export async function hasDashboardAccess(uid: string): Promise<boolean> {
+  try {
+    const roleData = await getUserRole(uid);
+    if (!roleData) {
+      return false;
+    }
+    const roleName = roleData.name.toLowerCase();
+    return ['admin', 'operaciones', 'atencion_cliente'].includes(roleName);
+  } catch (error) {
+    console.error('Error verifying dashboard access:', error);
+    return false;
+  }
+}

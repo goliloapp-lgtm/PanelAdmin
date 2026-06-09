@@ -13,6 +13,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Upgrade } from "./Updrade";
 import Image from "next/image";
+import { useAdmin } from "@/hooks/useAdmin";
 
 
 const renderMenuItems = (items: any, pathDirect: any) => {
@@ -68,9 +69,35 @@ const renderMenuItems = (items: any, pathDirect: any) => {
 };
 
 
+const filterMenuItemsByRole = (items: any[], role: string | null) => {
+  if (!role) return [];
+  const normalizedRole = role.toLowerCase();
+
+  return items.filter((item) => {
+    // For Operations (operaciones)
+    if (normalizedRole === 'operaciones') {
+      if (item.subheader === 'PASAJEROS') return false;
+      if (item.href === '/Passengers' || item.href === '/OffPassengers' || item.href === '/Employees') return false;
+    }
+
+    // For Customer Service (atencion_cliente)
+    if (normalizedRole === 'atencion_cliente') {
+      if (item.href === '/Employees') return false;
+    }
+
+    return true;
+  });
+};
+
 const SidebarItems = () => {
   const pathname = usePathname();
   const pathDirect = pathname;
+  const { roleName, isLoading } = useAdmin();
+
+  const filteredMenuItems = React.useMemo(() => {
+    if (isLoading) return [];
+    return filterMenuItemsByRole(Menuitems, roleName);
+  }, [roleName, isLoading]);
 
   return (
     < >
@@ -87,7 +114,7 @@ const SidebarItems = () => {
       
     />
 </div>
-        {renderMenuItems(Menuitems, pathDirect)}
+        {!isLoading && renderMenuItems(filteredMenuItems, pathDirect)}
         
       </MUI_Sidebar>
 
