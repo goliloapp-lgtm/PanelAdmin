@@ -15,6 +15,8 @@ import {
 } from '@mui/material';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import EditEmployeeModal from './EditEmployeeModal';
+import AssignRoleModal from './AssignRoleModal';
+import { IconUserPlus } from '@tabler/icons-react';
 
 export interface Employee {
     id: string;
@@ -34,6 +36,7 @@ const ListEmployees = () => {
     const [loading, setLoading] = useState(true);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
     const [order, setOrder] = useState<Order>('asc');
     const [orderBy, setOrderBy] = useState<keyof Employee>('firstName');
     const [page, setPage] = useState(0);
@@ -149,7 +152,28 @@ const ListEmployees = () => {
 
     return (
         <>
-            <DashboardCard title="Empleados Registrados">
+            <DashboardCard 
+                title="Empleados Registrados"
+                action={
+                    <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<IconUserPlus size={20} />}
+                        onClick={() => setIsAssignModalOpen(true)}
+                        sx={{
+                            textTransform: 'none',
+                            fontWeight: 600,
+                            borderRadius: '8px',
+                            boxShadow: 'none',
+                            '&:hover': {
+                                boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.08)',
+                            }
+                        }}
+                    >
+                        Asignar Rol a Usuario
+                    </Button>
+                }
+            >
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
                         aria-label="employees table"
@@ -280,6 +304,11 @@ const ListEmployees = () => {
                 open={isModalOpen}
                 onClose={handleCloseModal}
                 employee={selectedEmployee}
+                onUpdate={handleUpdateList}
+            />
+            <AssignRoleModal
+                open={isAssignModalOpen}
+                onClose={() => setIsAssignModalOpen(false)}
                 onUpdate={handleUpdateList}
             />
         </>
