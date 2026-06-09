@@ -215,11 +215,6 @@ const ViajesTable = () => {
                                     </Typography>
                                 </TableCell>
                                 <TableCell>
-                                    <Typography variant="subtitle2" fontWeight={600}>
-                                        Estado del Pago
-                                    </Typography>
-                                </TableCell>
-                                <TableCell>
                                     <TableSortLabel
                                         active={orderBy === 'updatedAt'}
                                         direction={orderBy === 'updatedAt' ? order : 'asc'}
@@ -254,13 +249,6 @@ const ViajesTable = () => {
                                         <Typography variant="subtitle2">
                                             {trip.paymentMethod}
                                         </Typography>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Chip
-                                            color={trip.paymentStatus === 'succeeded' ? 'success' : 'warning'}
-                                            size="small"
-                                            label={trip.paymentStatus}
-                                        ></Chip>
                                     </TableCell>
                                      <TableCell>
                                         <Typography variant="subtitle2">

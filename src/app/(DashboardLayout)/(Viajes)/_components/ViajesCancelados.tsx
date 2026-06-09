@@ -211,15 +211,10 @@ const ViajesCanceladosTable = () => {
                                     </TableSortLabel>
                                 </TableCell>
                                 <TableCell>
-                                    <Typography variant="subtitle2" fontWeight={600}>
-                                        Método de Pago
-                                    </Typography>
-                                </TableCell>
-                                <TableCell>
-                                    <Typography variant="subtitle2" fontWeight={600}>
-                                        Estado del Pago
-                                    </Typography>
-                                </TableCell>
+                                     <Typography variant="subtitle2" fontWeight={600}>
+                                         Método de Pago
+                                     </Typography>
+                                 </TableCell>
                                 <TableCell>
                                     <TableSortLabel
                                         active={orderBy === 'updatedAt'}
@@ -252,17 +247,10 @@ const ViajesCanceladosTable = () => {
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
-                                        <Typography variant="subtitle2">
-                                            {trip.paymentMethod}
-                                        </Typography>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Chip
-                                            color={trip.paymentStatus === 'succeeded' ? 'success' : 'warning'}
-                                            size="small"
-                                            label={trip.paymentStatus}
-                                        ></Chip>
-                                    </TableCell>
+                                         <Typography variant="subtitle2">
+                                             {trip.paymentMethod}
+                                         </Typography>
+                                     </TableCell>
                                      <TableCell>
                                         <Typography variant="subtitle2">
                                             {new Date(trip.updatedAt).toLocaleString()}
