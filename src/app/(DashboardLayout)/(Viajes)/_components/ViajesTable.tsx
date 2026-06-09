@@ -82,14 +82,10 @@ const ViajesTable = () => {
                     fetchedTrips.push({ id: doc.id, ...doc.data() });
                 });
 
-                // Filter for completed trips
+                // Filter for completed trips: status is 'completed' or no status at all
                 const completedTrips = fetchedTrips.filter((trip) => {
                     const status = trip.status?.toLowerCase();
-                    if (status) {
-                        return status === 'completed';
-                    }
-                    // Legacy fallback: if no status, consider completed if it has completedAt, rating, reviewTimestamp, or is paid
-                    return !!trip.completedAt || !!trip.rating || !!trip.reviewTimestamp || !!trip.paid;
+                    return !status || status === 'completed';
                 });
 
                 const tripsWithCustomerInfo = await Promise.all(

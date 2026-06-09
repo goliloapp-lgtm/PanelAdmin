@@ -82,15 +82,10 @@ const ViajesCanceladosTable = () => {
                     fetchedTrips.push({ id: doc.id, ...doc.data() });
                 });
 
-                // Filter for cancelled trips
+                // Filter for cancelled trips: status is 'cancelled' or 'canceled'
                 const cancelledTrips = fetchedTrips.filter((trip) => {
                     const status = trip.status?.toLowerCase();
-                    if (status) {
-                        return status === 'cancelled' || status === 'canceled';
-                    }
-                    // Legacy fallback: if no status and doesn't have any completion indicators, consider cancelled
-                    const isCompleted = !!trip.completedAt || !!trip.rating || !!trip.reviewTimestamp || !!trip.paid;
-                    return !isCompleted;
+                    return status === 'cancelled' || status === 'canceled';
                 });
 
                 const tripsWithCustomerInfo = await Promise.all(

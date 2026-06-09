@@ -138,7 +138,7 @@ export function useDashboardStats() {
         trips.forEach((trip) => {
           const status = trip.status?.toLowerCase();
           
-          if (status === 'completed' || (!status && trip.completedAt)) {
+          if (!status || status === 'completed') {
             completedCount++;
           } else if (status === 'cancelled' || status === 'canceled') {
             cancelledCount++;
