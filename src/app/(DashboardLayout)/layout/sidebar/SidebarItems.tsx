@@ -104,15 +104,18 @@ const SidebarItems = () => {
       <MUI_Sidebar width={"100%"} showProfile={false} themeColor={"#5D87FF"} themeSecondaryColor={'#49beff'} >
 
         {/* <Logo  img='/images/logos/Logo.png' component={Link} to="/" /> */}
-        <Box sx={{ px: 3, py: 3, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
-          <Image
-            src="/images/logos/Logo.png"
-            width={160}
-            height={50}
-            alt="Logo"
-            style={{ objectFit: 'contain' }}
-            priority
-          />
+        <Box sx={{ px: 3, py: 1.5, display: 'flex', justifyContent: 'flex-start', alignItems: 'center' }}>
+          <Link href="/" style={{ display: 'block', lineHeight: 0 }}>
+            <img
+              src="/images/logos/Logo.png"
+              alt="Logo"
+              style={{
+                height: '52px',
+                width: 'auto',
+                display: 'block'
+              }}
+            />
+          </Link>
         </Box>
         {!isLoading && renderMenuItems(filteredMenuItems, pathDirect)}
         
