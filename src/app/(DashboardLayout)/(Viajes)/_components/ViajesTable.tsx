@@ -242,9 +242,27 @@ const ViajesTable = () => {
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
-                                        <Typography variant="subtitle2">
-                                            {trip.paymentMethod}
-                                        </Typography>
+                                        {trip.paymentMethod ? (
+                                            <Chip
+                                                label={trip.paymentMethod.toLowerCase() === 'cash' ? 'EFECTIVO' : 'TARJETA'}
+                                                color={trip.paymentMethod.toLowerCase() === 'cash' ? 'success' : 'primary'}
+                                                size="small"
+                                                sx={{
+                                                    fontWeight: 600,
+                                                    borderRadius: '6px',
+                                                }}
+                                            />
+                                        ) : (
+                                            <Chip
+                                                label="N/A"
+                                                variant="outlined"
+                                                size="small"
+                                                sx={{
+                                                    color: 'text.secondary',
+                                                    borderColor: 'divider',
+                                                }}
+                                            />
+                                        )}
                                     </TableCell>
                                      <TableCell>
                                         <Typography variant="subtitle2">
