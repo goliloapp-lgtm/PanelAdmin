@@ -277,7 +277,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                     <Field
                       name="dniNumber"
                       as={TextField}
-                      label="Número de DNI"
+                      label="Número de identificación"
                       fullWidth
                       error={touched.dniNumber && !!errors.dniNumber}
                       helperText={<ErrorMessage name="dniNumber" />}
