@@ -11,16 +11,21 @@ import ProductPerformance from '@/app/(DashboardLayout)/components/dashboard/Pro
 import MonthlyEarnings from '@/app/(DashboardLayout)/components/dashboard/MonthlyEarnings';
 import DashboardCard from '@/app/(DashboardLayout)/components/shared/DashboardCard';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
+import { useAdmin } from '@/hooks/useAdmin';
 import { IconCar, IconClock, IconCircleX, IconUserPlus } from '@tabler/icons-react';
 
 const Dashboard = () => {
   const stats = useDashboardStats();
+  const { roleName, isLoading: authLoading } = useAdmin();
+
+  const normalizedRole = roleName ? roleName.toLowerCase() : '';
+  const showFinancials = normalizedRole !== 'atencion_cliente' && normalizedRole !== 'operaciones';
 
   return (
     <AuthGuard>
       <PageContainer title="Lilo Rides Dashboard" description="Dashboard de control Lilo App">
         <Box>
-          {stats.loading ? (
+          {stats.loading || authLoading ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 2 }}>
               <CircularProgress color="primary" />
               <Typography variant="body1" color="textSecondary">
@@ -123,49 +128,57 @@ const Dashboard = () => {
               </Grid>
 
               {/* Row 2: Charts and Details */}
-              <Grid
-                size={{
-                  xs: 12,
-                  lg: 8
-                }}>
-                <SalesOverview series={stats.salesOverviewSeries} categories={stats.salesOverviewCategories} />
-              </Grid>
-              <Grid
-                size={{
-                  xs: 12,
-                  lg: 4
-                }}>
-                <Grid container spacing={3}>
-                  <Grid size={12}>
-                    <YearlyBreakup 
-                      totalVentasAnual={stats.totalVentasAnual} 
-                      cambioVentasAnual={stats.cambioVentasAnual} 
-                      series={stats.yearlyBreakupSeries} 
-                    />
+              {showFinancials && (
+                <>
+                  <Grid
+                    size={{
+                      xs: 12,
+                      lg: 8
+                    }}>
+                    <SalesOverview series={stats.salesOverviewSeries} categories={stats.salesOverviewCategories} />
                   </Grid>
-                  <Grid size={12}>
-                    <MonthlyEarnings 
-                      gananciasMes={stats.gananciasMes} 
-                      cambioGananciasMes={stats.cambioGananciasMes} 
-                      chartData={stats.monthlyEarningsChartData} 
-                    />
+                  <Grid
+                    size={{
+                      xs: 12,
+                      lg: 4
+                    }}>
+                    <Grid container spacing={3}>
+                      <Grid size={12}>
+                        <YearlyBreakup 
+                          totalVentasAnual={stats.totalVentasAnual} 
+                          cambioVentasAnual={stats.cambioVentasAnual} 
+                          series={stats.yearlyBreakupSeries} 
+                        />
+                      </Grid>
+                      <Grid size={12}>
+                        <MonthlyEarnings 
+                          gananciasMes={stats.gananciasMes} 
+                          cambioGananciasMes={stats.cambioGananciasMes} 
+                          chartData={stats.monthlyEarningsChartData} 
+                        />
+                      </Grid>
+                    </Grid>
                   </Grid>
-                </Grid>
-              </Grid>
+                </>
+              )}
+              
               <Grid
                 size={{
                   xs: 12,
-                  lg: 4
+                  lg: showFinancials ? 4 : 12
                 }}>
                 <RecentTransactions transactions={stats.recentTransactions} />
               </Grid>
-              <Grid
-                size={{
-                  xs: 12,
-                  lg: 8
-                }}>
-                <ProductPerformance riders={stats.driverPerformance} />
-              </Grid>
+              
+              {showFinancials && (
+                <Grid
+                  size={{
+                    xs: 12,
+                    lg: 8
+                  }}>
+                  <ProductPerformance riders={stats.driverPerformance} />
+                </Grid>
+              )}
             </Grid>
           )}
         </Box>
