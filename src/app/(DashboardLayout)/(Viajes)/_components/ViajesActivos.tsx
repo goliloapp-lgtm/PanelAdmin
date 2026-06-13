@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { getDatabase, ref, onValue } from 'firebase/database';
-import { getFirestore, collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { getDatabase, ref, onValue, remove } from 'firebase/database';
+import { getFirestore, collection, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { firebaseApp } from '@/utils/firebase';
-import { cancelRideCallable } from '@/utils/functions';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/utils/functions';
 import {
     Typography,
     Box,
@@ -241,17 +242,93 @@ const ViajesActivos = () => {
         if (!selectedRide) return;
         setCancelling(true);
         try {
-            await cancelRideCallable({ rideId: selectedRide.id });
+            const firestoreDb = getFirestore(firebaseApp);
+            const rtdb = getDatabase(firebaseApp);
+
+            // 1. Notify the driver if driverId is present
+            if (selectedRide.driverId) {
+                try {
+                    const notifyDriver = httpsCallable(functions, 'notifyDriverRideCancelled');
+                    await notifyDriver({
+                        rideId: selectedRide.id,
+                        clientId: selectedRide.passengerId || selectedRide.userId || '',
+                        driverId: selectedRide.driverId,
+                        clientName: selectedRide.displayPassengerName || 'Pasajero',
+                        reason: 'Cancelado por el administrador desde el panel de control',
+                        canceledAt: new Date().toISOString()
+                    });
+                } catch (notifyErr) {
+                    console.warn('Driver push notification failed or was ignored:', notifyErr);
+                }
+            }
+
+            // 2. Prepare Firestore historyTrips document
+            const historyTripData: any = {
+                rideId: selectedRide.id,
+                status: 'cancelled',
+                paymentMethod: selectedRide.paymentMethod || 'cash',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                completedAt: Date.now(),
+            };
+
+            // Copy passenger details
+            const passengerId = selectedRide.passengerId || selectedRide.userId;
+            if (passengerId) {
+                historyTripData.passengerId = passengerId;
+                historyTripData.userId = passengerId;
+            }
+            if (selectedRide.displayPassengerName) {
+                historyTripData.passengerName = selectedRide.displayPassengerName;
+            }
+            // Copy driver details
+            if (selectedRide.driverId) {
+                historyTripData.driverId = selectedRide.driverId;
+            }
+            if (selectedRide.displayDriverName) {
+                historyTripData.driverName = selectedRide.displayDriverName;
+            }
+
+            // Copy pricing details
+            if (selectedRide.originalPrice !== undefined) {
+                historyTripData.originalPrice = Number(selectedRide.originalPrice);
+            } else if (selectedRide.farePriceCents !== undefined) {
+                historyTripData.originalPrice = Number(selectedRide.farePriceCents) / 100;
+            }
+            if (selectedRide.farePriceCents !== undefined) {
+                historyTripData.farePriceCents = Number(selectedRide.farePriceCents);
+            } else if (selectedRide.originalPrice !== undefined) {
+                historyTripData.farePriceCents = Math.round(Number(selectedRide.originalPrice) * 100);
+            }
+
+            // Copy other route details
+            if (selectedRide.origin) {
+                historyTripData.origin = selectedRide.origin;
+            }
+            if (selectedRide.destination) {
+                historyTripData.destination = selectedRide.destination;
+            }
+            if (selectedRide.address) {
+                historyTripData.address = selectedRide.address;
+            }
+            if (selectedRide.serviceType) {
+                historyTripData.serviceType = selectedRide.serviceType;
+            }
+
+            // Write to Firestore historyTrips
+            const historyTripRef = doc(firestoreDb, 'historyTrips', selectedRide.id);
+            await setDoc(historyTripRef, historyTripData, { merge: true });
+
+            // 3. Remove from Realtime Database
+            const rideRequestRef = ref(rtdb, `rideRequests/${selectedRide.id}`);
+            await remove(rideRequestRef);
+
             toast.success(`Viaje ${selectedRide.id} cancelado correctamente.`);
             setConfirmOpen(false);
             setSelectedRide(null);
         } catch (err: any) {
             console.error('Error cancelling ride:', err);
-            const msg =
-                err?.code === 'functions/not-found'
-                    ? 'La función de cancelación aún no está disponible en el servidor. Contacta al equipo de backend.'
-                    : err?.message || 'Error al cancelar el viaje. Intenta de nuevo.';
-            toast.error(msg);
+            toast.error(err?.message || 'Error al cancelar el viaje. Intenta de nuevo.');
         } finally {
             setCancelling(false);
         }

@@ -2,7 +2,7 @@ import { getFunctions, httpsCallable } from "firebase/functions";
 import { firebaseApp } from "./firebase";
 
 // Initialize functions instance for the us-central1 region
-const functions = getFunctions(firebaseApp, "us-central1");
+export const functions = getFunctions(firebaseApp, "us-central1");
 
 // --- Interfaces for Inputs and Responses ---
 
@@ -103,14 +103,7 @@ export interface ConfirmAccountDeletionResponse {
   message: string;
 }
 
-export interface CancelRideParams {
-  rideId: string;
-}
 
-export interface CancelRideResponse {
-  success: boolean;
-  message: string;
-}
 
 // --- Callable Export Definitions ---
 
@@ -177,9 +170,5 @@ export const confirmAccountDeletionCallable = httpsCallable<ConfirmAccountDeleti
   "confirmAccountDeletion"
 );
 
-// Trip Cancellation
-export const cancelRideCallable = httpsCallable<CancelRideParams, CancelRideResponse>(
-  functions,
-  "cancelRide"
-);
+
 
