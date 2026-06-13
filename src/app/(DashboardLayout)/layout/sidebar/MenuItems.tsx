@@ -8,6 +8,7 @@ import {
   IconUserExclamation,
   IconSettings,
   IconUserShield,
+  IconRoute,
 } from "@tabler/icons-react";
 
 import { uniqueId } from "lodash";
@@ -65,6 +66,12 @@ const Menuitems = [
   {
     navlabel: true,
     subheader: "TRANSACCIONES",
+  },
+  {
+    id: uniqueId(),
+    title: "Viajes Activos",
+    icon: IconRoute,
+    href: "/Viajes-activos",
   },
   {
     id: uniqueId(),

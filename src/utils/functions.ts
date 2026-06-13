@@ -103,6 +103,15 @@ export interface ConfirmAccountDeletionResponse {
   message: string;
 }
 
+export interface CancelRideParams {
+  rideId: string;
+}
+
+export interface CancelRideResponse {
+  success: boolean;
+  message: string;
+}
+
 // --- Callable Export Definitions ---
 
 // Cleanup Functions
@@ -167,3 +176,10 @@ export const confirmAccountDeletionCallable = httpsCallable<ConfirmAccountDeleti
   functions,
   "confirmAccountDeletion"
 );
+
+// Trip Cancellation
+export const cancelRideCallable = httpsCallable<CancelRideParams, CancelRideResponse>(
+  functions,
+  "cancelRide"
+);
+
