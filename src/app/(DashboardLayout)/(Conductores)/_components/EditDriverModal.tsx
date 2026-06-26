@@ -28,6 +28,8 @@ import {
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
 } from "@/utils/functions";
+import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import { firebaseApp } from "@/utils/firebase";
 
 interface UserData {
   firstName?: string;
@@ -63,6 +65,14 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
   const [emailStatus, setEmailStatus] = useState<{ isVerified: boolean; verifiedAt?: string | null } | null>(null);
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [sendingVerification, setSendingVerification] = useState(false);
+  const [isEditing, setIsEditing] = useState(!readOnly);
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setIsEditing(!readOnly);
+    }
+  }, [open, readOnly]);
 
   useEffect(() => {
     if (open && driver?.userId) {
@@ -115,6 +125,30 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
 
   if (!driver) return null;
 
+  const handleImageUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: string,
+    setFieldValue: (field: string, value: any) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingField(field);
+    try {
+      const storage = getStorage(firebaseApp);
+      const imageRef = sRef(storage, `drivers/${driver.uid}/${field}_${Date.now()}_${file.name}`);
+      await uploadBytes(imageRef, file);
+      const downloadUrl = await getDownloadURL(imageRef);
+      setFieldValue(field, downloadUrl);
+      toast.success("Documento subido correctamente");
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      toast.error("Error al subir el documento");
+    } finally {
+      setUploadingField(null);
+    }
+  };
+
   const handleUpdate = async (values: Driver) => {
     try {
       const dataToUpdate: Partial<Driver> = {
@@ -124,6 +158,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
         vehicleBrand: values.vehicleBrand ?? "",
         vehicleModel: values.vehicleModel ?? "",
         isUserVerified: values.isUserVerified ?? false,
+        profileImageUrl: values.profileImageUrl ?? "",
+        licenseImageUrl: values.licenseImageUrl ?? "",
+        criminalRecordImageUrl: values.criminalRecordImageUrl ?? "",
       };
       await updateDriver(driver.uid, dataToUpdate);
       toast.success("Cambios guardados correctamente");
@@ -156,7 +193,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>{readOnly ? "Información del Conductor" : "Verificar Conductor"}</DialogTitle>
+      <DialogTitle>{isEditing ? "Editar Conductor" : "Información del Conductor"}</DialogTitle>
       <Formik
         initialValues={{
           ...driver,
@@ -166,6 +203,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
           vehicleBrand: driver.vehicleBrand ?? "",
           vehicleModel: driver.vehicleModel ?? "",
           isUserVerified: driver.isUserVerified ?? false,
+          profileImageUrl: driver.profileImageUrl ?? "",
+          licenseImageUrl: driver.licenseImageUrl ?? "",
+          criminalRecordImageUrl: driver.criminalRecordImageUrl ?? "",
         }}
         validationSchema={validationSchema}
         onSubmit={handleUpdate}
@@ -248,13 +288,13 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                   </Typography>
                   <Grid container spacing={2}>
                     {[
-                      { src: driver.profileImageUrl, label: "Perfil" },
-                      { src: driver.licenseImageUrl, label: "Licencia" },
-                      { src: driver.criminalRecordImageUrl, label: "Antecedentes" },
+                      { src: values.profileImageUrl, label: "Perfil", field: "profileImageUrl" },
+                      { src: values.licenseImageUrl, label: "Licencia", field: "licenseImageUrl" },
+                      { src: values.criminalRecordImageUrl, label: "Antecedentes", field: "criminalRecordImageUrl" },
                     ].map((img, index) => (
                       <Grid size={{ xs: 6, sm: 4 }} key={index}>
                         <Typography variant="caption" align="center" component="div">{img.label}</Typography>
-                        <Card>
+                        <Card sx={{ mb: 1 }}>
                           <CardMedia
                             component="img"
                             image={img.src ?? ""}
@@ -263,6 +303,26 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                             onClick={() => img.src && window.open(img.src, '_blank')}
                           />
                         </Card>
+                        {isEditing && (
+                          <Box sx={{ display: "flex", justifyContent: "center" }}>
+                            <Button
+                              variant="outlined"
+                              component="label"
+                              size="small"
+                              disabled={uploadingField === img.field}
+                              startIcon={uploadingField === img.field ? <CircularProgress size={16} /> : null}
+                              fullWidth
+                            >
+                              {uploadingField === img.field ? "Subiendo..." : "Subir"}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                hidden
+                                onChange={(e) => handleImageUpload(e, img.field, setFieldValue)}
+                              />
+                            </Button>
+                          </Box>
+                        )}
                       </Grid>
                     ))}
                   </Grid>
@@ -281,7 +341,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.dniNumber && !!errors.dniNumber}
                       helperText={<ErrorMessage name="dniNumber" />}
-                      InputProps={{ readOnly: readOnly }}
+                      InputProps={{ readOnly: !isEditing }}
                     />
                     <Field
                       name="licensePlate"
@@ -290,7 +350,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.licensePlate && !!errors.licensePlate}
                       helperText={<ErrorMessage name="licensePlate" />}
-                      InputProps={{ readOnly: readOnly }}
+                      InputProps={{ readOnly: !isEditing }}
                     />
                     <Field
                       name="phoneNumber"
@@ -299,7 +359,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.phoneNumber && !!errors.phoneNumber}
                       helperText={<ErrorMessage name="phoneNumber" />}
-                      InputProps={{ readOnly: readOnly }}
+                      InputProps={{ readOnly: !isEditing }}
                     />
                     <Field
                       name="vehicleBrand"
@@ -308,7 +368,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.vehicleBrand && !!errors.vehicleBrand}
                       helperText={<ErrorMessage name="vehicleBrand" />}
-                      InputProps={{ readOnly: readOnly }}
+                      InputProps={{ readOnly: !isEditing }}
                     />
                     <Field
                       name="vehicleModel"
@@ -317,9 +377,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                       fullWidth
                       error={touched.vehicleModel && !!errors.vehicleModel}
                       helperText={<ErrorMessage name="vehicleModel" />}
-                      InputProps={{ readOnly: readOnly }}
+                      InputProps={{ readOnly: !isEditing }}
                     />
-                    {!readOnly && (
+                    {isEditing && !readOnly && (
                     <FormControlLabel
                       control={
                         <Switch
@@ -336,12 +396,29 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
               </Grid>
             </DialogContent>
             <DialogActions sx={{ p: 3 }}>
-              <Button onClick={onClose} variant="outlined">{readOnly ? "Cerrar" : "Cancelar"}</Button>
-              {!readOnly && (
+              {!isEditing ? (
                 <>
-                  <Button color="error" onClick={() => setIsConfirmOpen(true)} variant="outlined">
-                    Rechazar Conductor
+                  <Button onClick={onClose} variant="outlined">Cerrar</Button>
+                  <Button onClick={() => setIsEditing(true)} variant="contained" color="primary">
+                    Editar
                   </Button>
+                </>
+              ) : (
+                <>
+                  <Button onClick={() => {
+                    if (readOnly) {
+                      setIsEditing(false);
+                    } else {
+                      onClose();
+                    }
+                  }} variant="outlined">
+                    Cancelar
+                  </Button>
+                  {!readOnly && (
+                    <Button color="error" onClick={() => setIsConfirmOpen(true)} variant="outlined">
+                      Rechazar Conductor
+                    </Button>
+                  )}
                   <Button type="submit" variant="contained" color="primary">
                     Guardar Cambios
                   </Button>

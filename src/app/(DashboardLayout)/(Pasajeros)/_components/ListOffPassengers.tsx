@@ -11,8 +11,11 @@ import {
     Chip,
     Button,
     TableSortLabel,
-    TablePagination
+    TablePagination,
+    TextField,
+    InputAdornment
 } from '@mui/material';
+import { IconSearch } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import EditPassengerModal from '../../components/dashboard/EditPassengerModal';
 
@@ -37,6 +40,7 @@ const ListOffPassengers = () => {
     const [orderBy, setOrderBy] = useState<keyof Passenger>('firstName');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const handleOpenModal = (passenger: Passenger) => {
         setSelectedPassenger(passenger);
@@ -60,6 +64,11 @@ const ListOffPassengers = () => {
 
     const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
         setRowsPerPage(parseInt(event.target.value, 10));
+        setPage(0);
+    };
+
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(event.target.value);
         setPage(0);
     };
 
@@ -100,18 +109,39 @@ const ListOffPassengers = () => {
         fetchPassengers();
     };
 
+    const filteredPassengers = useMemo(() => {
+        if (!searchTerm.trim()) return passengers;
+        const lowerSearch = searchTerm.toLowerCase();
+        return passengers.filter(passenger => {
+            const fullName = `${passenger.firstName || ''} ${passenger.lastName || ''}`.toLowerCase();
+            const email = (passenger.email || '').toLowerCase();
+            return fullName.includes(lowerSearch) || email.includes(lowerSearch);
+        });
+    }, [passengers, searchTerm]);
+
     const sortedPassengers = useMemo(() => {
         const comparator = (a: Passenger, b: Passenger) => {
-            if (b[orderBy] < a[orderBy]) {
+            const valA = a[orderBy];
+            const valB = b[orderBy];
+            if (typeof valA === 'string' && typeof valB === 'string') {
+                if (valB.toLowerCase() < valA.toLowerCase()) {
+                    return order === 'asc' ? 1 : -1;
+                }
+                if (valB.toLowerCase() > valA.toLowerCase()) {
+                    return order === 'asc' ? -1 : 1;
+                }
+                return 0;
+            }
+            if (valB < valA) {
                 return order === 'asc' ? 1 : -1;
             }
-            if (b[orderBy] > a[orderBy]) {
+            if (valB > valA) {
                 return order === 'asc' ? -1 : 1;
             }
             return 0;
         };
-        return [...passengers].sort(comparator);
-    }, [passengers, order, orderBy]);
+        return [...filteredPassengers].sort(comparator);
+    }, [filteredPassengers, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
@@ -126,9 +156,30 @@ const ListOffPassengers = () => {
         return <Typography>Cargando pasajeros...</Typography>;
     }
 
+
     return (
         <>
-            <DashboardCard title="Pasajeros no activos">
+            <DashboardCard 
+                title="Pasajeros no activos"
+                action={
+                    <TextField
+                        placeholder="Buscar por nombre o email..."
+                        size="small"
+                        value={searchTerm}
+                        onChange={handleSearchChange}
+                        InputProps={{
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <IconSearch size="1.1rem" />
+                                </InputAdornment>
+                            ),
+                        }}
+                        sx={{
+                            width: { xs: '100%', sm: '250px' }
+                        }}
+                    />
+                }
+            >
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
                         aria-label="simple table"
@@ -230,7 +281,7 @@ const ListOffPassengers = () => {
                 <TablePagination
                     rowsPerPageOptions={[5, 10, 25]}
                     component="div"
-                    count={passengers.length}
+                    count={filteredPassengers.length}
                     rowsPerPage={rowsPerPage}
                     page={page}
                     onPageChange={handleChangePage}
