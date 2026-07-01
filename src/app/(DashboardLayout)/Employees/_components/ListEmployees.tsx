@@ -11,12 +11,14 @@ import {
     Button,
     TableSortLabel,
     TablePagination,
-    Chip
+    Chip,
+    TextField,
+    InputAdornment
 } from '@mui/material';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import EditEmployeeModal from './EditEmployeeModal';
 import AssignRoleModal from './AssignRoleModal';
-import { IconUserPlus } from '@tabler/icons-react';
+import { IconUserPlus, IconSearch } from '@tabler/icons-react';
 
 export interface Employee {
     id: string;
@@ -41,6 +43,7 @@ const ListEmployees = () => {
     const [orderBy, setOrderBy] = useState<keyof Employee>('firstName');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const handleOpenModal = (employee: Employee) => {
         setSelectedEmployee(employee);
@@ -64,6 +67,11 @@ const ListEmployees = () => {
 
     const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
         setRowsPerPage(parseInt(event.target.value, 10));
+        setPage(0);
+    };
+
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(event.target.value);
         setPage(0);
     };
 
@@ -121,6 +129,18 @@ const ListEmployees = () => {
         fetchEmployees();
     };
 
+    const filteredEmployees = useMemo(() => {
+        if (!searchTerm.trim()) return employees;
+        const lowerSearch = searchTerm.toLowerCase();
+        return employees.filter(emp => {
+            const fullName = `${emp.firstName || ''} ${emp.lastName || ''}`.toLowerCase();
+            return fullName.includes(lowerSearch) ||
+                (emp.email && emp.email.toLowerCase().includes(lowerSearch)) ||
+                (emp.phone && emp.phone.includes(lowerSearch)) ||
+                (emp.roleName && emp.roleName.toLowerCase().includes(lowerSearch));
+        });
+    }, [employees, searchTerm]);
+
     const sortedEmployees = useMemo(() => {
         const comparator = (a: Employee, b: Employee) => {
             const valA = a[orderBy] || '';
@@ -134,8 +154,8 @@ const ListEmployees = () => {
             }
             return 0;
         };
-        return [...employees].sort(comparator);
-    }, [employees, order, orderBy]);
+        return [...filteredEmployees].sort(comparator);
+    }, [filteredEmployees, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
@@ -155,28 +175,37 @@ const ListEmployees = () => {
             <DashboardCard 
                 title="Empleados Registrados"
                 action={
-                    <Button
-                        variant="contained"
-                        color="primary"
-                        startIcon={<IconUserPlus size={20} />}
-                        onClick={() => setIsAssignModalOpen(true)}
-                        sx={{
-                            textTransform: 'none',
-                            fontWeight: 600,
-                            borderRadius: '8px',
-                            boxShadow: 'none',
-                            '&:hover': {
-                                boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.08)',
-                            }
-                        }}
-                    >
-                        Asignar Rol a Usuario
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <TextField
+                            placeholder="Buscar por nombre o email..."
+                            size="small"
+                            value={searchTerm}
+                            onChange={handleSearchChange}
+                            InputProps={{
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <IconSearch size="1.1rem" />
+                                    </InputAdornment>
+                                ),
+                            }}
+                            sx={{
+                                width: { xs: '100%', sm: '250px' }
+                            }}
+                        />
+                        <Button
+                            variant="contained"
+                            color="primary"
+                            startIcon={<IconUserPlus size="1.2rem" />}
+                            onClick={() => setIsAssignModalOpen(true)}
+                        >
+                            Asignar Rol
+                        </Button>
+                    </Box>
                 }
             >
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
-                        aria-label="employees table"
+                        aria-label="simple table"
                         sx={{
                             whiteSpace: "nowrap",
                             mt: 2
@@ -184,17 +213,6 @@ const ListEmployees = () => {
                     >
                         <TableHead>
                             <TableRow>
-                                <TableCell>
-                                    <TableSortLabel
-                                        active={orderBy === 'email'}
-                                        direction={orderBy === 'email' ? order : 'asc'}
-                                        onClick={() => handleRequestSort('email')}
-                                    >
-                                        <Typography variant="subtitle2" fontWeight={600}>
-                                            Email
-                                        </Typography>
-                                    </TableSortLabel>
-                                </TableCell>
                                 <TableCell>
                                     <TableSortLabel
                                         active={orderBy === 'firstName'}
@@ -208,12 +226,12 @@ const ListEmployees = () => {
                                 </TableCell>
                                 <TableCell>
                                     <TableSortLabel
-                                        active={orderBy === 'lastName'}
-                                        direction={orderBy === 'lastName' ? order : 'asc'}
-                                        onClick={() => handleRequestSort('lastName')}
+                                        active={orderBy === 'email'}
+                                        direction={orderBy === 'email' ? order : 'asc'}
+                                        onClick={() => handleRequestSort('email')}
                                     >
                                         <Typography variant="subtitle2" fontWeight={600}>
-                                            Apellido
+                                            Email
                                         </Typography>
                                     </TableSortLabel>
                                 </TableCell>
@@ -233,47 +251,57 @@ const ListEmployees = () => {
                                         </Typography>
                                     </TableSortLabel>
                                 </TableCell>
+                                <TableCell>
+                                    <Typography variant="subtitle2" fontWeight={600}>
+                                        Estado
+                                    </Typography>
+                                </TableCell>
                                 <TableCell align="right">
                                     <Typography variant="subtitle2" fontWeight={600}>
-                                        Acciones
+                                        Acción
                                     </Typography>
                                 </TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {visibleRows.map((emp) => (
-                                <TableRow key={emp.id}>
-                                    <TableCell>
-                                        <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {emp.email}
-                                        </Typography>
-                                    </TableCell>
+                            {visibleRows.map((employee) => (
+                                <TableRow key={employee.id}>
                                     <TableCell>
                                         <Typography variant="subtitle2" fontWeight={600}>
-                                            {emp.firstName}
+                                            {employee.firstName} {employee.lastName}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
                                         <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {emp.lastName}
+                                            {employee.email}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
-                                        <Typography color="textSecondary" variant="subtitle2" fontWeight={400}>
-                                            {emp.phone}
+                                        <Typography variant="subtitle2">
+                                            {employee.phone}
                                         </Typography>
                                     </TableCell>
                                     <TableCell>
                                         <Chip
-                                            label={emp.roleName.toUpperCase()}
-                                            color="primary"
-                                            variant="outlined"
+                                            label={employee.roleName.toUpperCase()}
+                                            color="secondary"
+                                            size="small"
+                                        />
+                                    </TableCell>
+                                    <TableCell>
+                                        <Chip
+                                            label={employee.isActive ? "ACTIVO" : "INACTIVO"}
+                                            color={employee.isActive ? "success" : "default"}
                                             size="small"
                                         />
                                     </TableCell>
                                     <TableCell align="right">
-                                        <Button variant="contained" color="primary" onClick={() => handleOpenModal(emp)}>
-                                            Editar Rol
+                                        <Button 
+                                            variant="contained" 
+                                            color="primary" 
+                                            onClick={() => handleOpenModal(employee)}
+                                        >
+                                            Editar
                                         </Button>
                                     </TableCell>
                                 </TableRow>
@@ -293,7 +321,7 @@ const ListEmployees = () => {
                 <TablePagination
                     rowsPerPageOptions={[5, 10, 25]}
                     component="div"
-                    count={employees.length}
+                    count={filteredEmployees.length}
                     rowsPerPage={rowsPerPage}
                     page={page}
                     onPageChange={handleChangePage}

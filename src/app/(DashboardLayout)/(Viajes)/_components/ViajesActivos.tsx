@@ -345,39 +345,30 @@ const ViajesActivos = () => {
 
     return (
         <>
-            <DashboardCard title="Viajes Activos">
-                {/* Search bar */}
-                <Box sx={{ mb: 2, mt: 1 }}>
+            <DashboardCard 
+                title="Viajes Activos"
+                action={
                     <TextField
+                        placeholder="Buscar por email..."
                         size="small"
-                        placeholder="Buscar por email del conductor o pasajero..."
                         value={searchEmail}
                         onChange={(e) => {
                             setSearchEmail(e.target.value);
                             setPage(0);
                         }}
-                        slotProps={{
-                            input: {
-                                startAdornment: (
-                                    <InputAdornment position="start">
-                                        <IconSearch size="1rem" />
-                                    </InputAdornment>
-                                ),
-                                endAdornment: searchEmail ? (
-                                    <InputAdornment position="end">
-                                        <IconX
-                                            size="1rem"
-                                            style={{ cursor: 'pointer' }}
-                                            onClick={() => setSearchEmail('')}
-                                        />
-                                    </InputAdornment>
-                                ) : null,
-                            },
+                        InputProps={{
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <IconSearch size="1.1rem" />
+                                </InputAdornment>
+                            ),
                         }}
-                        sx={{ width: { xs: '100%', sm: '380px' } }}
+                        sx={{
+                            width: { xs: '100%', sm: '250px' }
+                        }}
                     />
-                </Box>
-
+                }
+            >
                 {/* Table */}
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table aria-label="viajes activos" sx={{ whiteSpace: 'nowrap', mt: 1 }}>

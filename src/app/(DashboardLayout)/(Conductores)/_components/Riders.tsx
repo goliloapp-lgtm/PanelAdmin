@@ -12,8 +12,11 @@ import {
     Button,
     TableSortLabel,
     TablePagination,
-    Avatar
+    Avatar,
+    TextField,
+    InputAdornment
 } from '@mui/material';
+import { IconSearch } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import EditDriverModal from './EditDriverModal';
 // import EditDriverModal from './EditDriverModal'; 
@@ -51,6 +54,7 @@ const Riders = () => {
     const [orderBy, setOrderBy] = useState<string>('fullName');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const handleOpenModal = (driver: Driver) => {
         setSelectedDriver(driver);
@@ -74,6 +78,11 @@ const Riders = () => {
 
     const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
         setRowsPerPage(parseInt(event.target.value, 10));
+        setPage(0);
+    };
+
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(event.target.value);
         setPage(0);
     };
 
@@ -137,6 +146,16 @@ const Riders = () => {
         });
     }, [drivers, usersDict]);
 
+    const filteredDrivers = useMemo(() => {
+        if (!searchTerm.trim()) return ridersWithNames;
+        const lowerSearch = searchTerm.toLowerCase();
+        return ridersWithNames.filter(driver => 
+            driver.fullName.toLowerCase().includes(lowerSearch) ||
+            (driver.phoneNumber && driver.phoneNumber.includes(lowerSearch)) ||
+            (driver.licensePlate && driver.licensePlate.toLowerCase().includes(lowerSearch))
+        );
+    }, [ridersWithNames, searchTerm]);
+
     const sortedDrivers = useMemo(() => {
         const comparator = (a: any, b: any) => {
             const valA = a[orderBy] || "";
@@ -149,8 +168,8 @@ const Riders = () => {
             }
             return 0;
         };
-        return [...ridersWithNames].sort(comparator);
-    }, [ridersWithNames, order, orderBy]);
+        return [...filteredDrivers].sort(comparator);
+    }, [filteredDrivers, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
@@ -167,8 +186,27 @@ const Riders = () => {
 
     return (
         <>
-            <DashboardCard title="Conductores sin verificar
-            ">
+            <DashboardCard 
+                title="Conductores sin verificar"
+                action={
+                    <TextField
+                        placeholder="Buscar por nombre..."
+                        size="small"
+                        value={searchTerm}
+                        onChange={handleSearchChange}
+                        InputProps={{
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <IconSearch size="1.1rem" />
+                                </InputAdornment>
+                            ),
+                        }}
+                        sx={{
+                            width: { xs: '100%', sm: '250px' }
+                        }}
+                    />
+                }
+            >
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
                         aria-label="simple table"
@@ -264,7 +302,7 @@ const Riders = () => {
                 <TablePagination
                     rowsPerPageOptions={[5, 10, 25]}
                     component="div"
-                    count={drivers.length}
+                    count={filteredDrivers.length}
                     rowsPerPage={rowsPerPage}
                     page={page}
                     onPageChange={handleChangePage}

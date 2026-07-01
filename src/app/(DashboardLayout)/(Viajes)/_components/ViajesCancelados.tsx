@@ -13,8 +13,11 @@ import {
     Button,
     TableSortLabel,
     TablePagination,
-    Avatar
+    Avatar,
+    TextField,
+    InputAdornment
 } from '@mui/material';
+import { IconSearch } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 
 export interface Trip {
@@ -53,6 +56,7 @@ const ViajesCanceladosTable = () => {
     const [orderBy, setOrderBy] = useState<keyof Trip>('updatedAt');
     const [page, setPage] = useState(0);
     const [rowsPerPage, setRowsPerPage] = useState(10);
+    const [searchTerm, setSearchTerm] = useState('');
 
     const handleRequestSort = (property: keyof Trip) => {
         const isAsc = orderBy === property && order === 'asc';
@@ -66,6 +70,11 @@ const ViajesCanceladosTable = () => {
 
     const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
         setRowsPerPage(parseInt(event.target.value, 10));
+        setPage(0);
+    };
+
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchTerm(event.target.value);
         setPage(0);
     };
 
@@ -139,6 +148,17 @@ const ViajesCanceladosTable = () => {
         return () => unsubscribe();
     }, []);
 
+    const filteredTrips = useMemo(() => {
+        if (!searchTerm.trim()) return trips;
+        const lowerSearch = searchTerm.toLowerCase();
+        return trips.filter(trip => {
+            const customerFullName = `${trip.customerName || ''} ${trip.customerLastName || ''}`.toLowerCase();
+            return trip.id.toLowerCase().includes(lowerSearch) ||
+                customerFullName.includes(lowerSearch) ||
+                (trip.paymentMethod && trip.paymentMethod.toLowerCase().includes(lowerSearch));
+        });
+    }, [trips, searchTerm]);
+
     const sortedTrips = useMemo(() => {
         const comparator = (a: Trip, b: Trip) => {
             const valA = a[orderBy];
@@ -155,8 +175,8 @@ const ViajesCanceladosTable = () => {
             }
             return 0;
         };
-        return [...trips].sort(comparator);
-    }, [trips, order, orderBy]);
+        return [...filteredTrips].sort(comparator);
+    }, [filteredTrips, order, orderBy]);
 
     const visibleRows = useMemo(
         () =>
@@ -173,7 +193,27 @@ const ViajesCanceladosTable = () => {
 
     return (
         <>
-            <DashboardCard title="Historial de Viajes Cancelados">
+            <DashboardCard 
+                title="Historial de Viajes Cancelados"
+                action={
+                    <TextField
+                        placeholder="Buscar por ID o cliente..."
+                        size="small"
+                        value={searchTerm}
+                        onChange={handleSearchChange}
+                        InputProps={{
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <IconSearch size="1.1rem" />
+                                </InputAdornment>
+                            ),
+                        }}
+                        sx={{
+                            width: { xs: '100%', sm: '250px' }
+                        }}
+                    />
+                }
+            >
                 <Box sx={{ overflow: 'auto', width: { xs: '280px', sm: 'auto' } }}>
                     <Table
                         aria-label="simple table"
@@ -277,7 +317,7 @@ const ViajesCanceladosTable = () => {
                 <TablePagination
                     rowsPerPageOptions={[5, 10, 25]}
                     component="div"
-                    count={trips.length}
+                    count={filteredTrips.length}
                     rowsPerPage={rowsPerPage}
                     page={page}
                     onPageChange={handleChangePage}
