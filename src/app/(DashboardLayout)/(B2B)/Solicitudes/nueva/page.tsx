@@ -55,6 +55,7 @@ import {
   getAllowedCategoriesForPassengers,
 } from "@/utils/b2bPricing";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { getFareQuoteCallable } from "@/utils/functions";
 
 const NuevaSolicitudB2BPage = () => {
   const router = useRouter();
@@ -64,6 +65,20 @@ const NuevaSolicitudB2BPage = () => {
   const [travellers, setTravellers] = useState<B2BTraveller[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Backend quote state (getFareQuote callable)
+  const [backendQuote, setBackendQuote] = useState<{
+    totalAmount: number;
+    farePrice: number;
+    appliedFareRate: number;
+    chargedDistance: number;
+    minimumDistance: number;
+    minimumApplied: boolean;
+    taxAmount?: number;
+    taxRate?: number;
+    currency: string;
+  } | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
 
   const [companyId, setCompanyId] = useState("");
   const [costCenterId, setCostCenterId] = useState("");
@@ -183,6 +198,46 @@ const NuevaSolicitudB2BPage = () => {
       calculateB2BTariff(vehicleCategory, effectiveOneWayKm, roundTrip),
     [vehicleCategory, effectiveOneWayKm, roundTrip]
   );
+
+  // CF-38: Fetch official backend quote whenever legs or category change
+  useEffect(() => {
+    if (effectiveOneWayKm <= 0) return;
+    const oneWayDuration = Math.max(5, Math.round(tariffBreakdown.estimatedDurationMinutes / (roundTrip ? 2 : 1)));
+    const legs = roundTrip
+      ? [
+          { distance: effectiveOneWayKm, durationMinutes: oneWayDuration },
+          { distance: effectiveOneWayKm, durationMinutes: oneWayDuration },
+        ]
+      : [{ distance: effectiveOneWayKm, durationMinutes: oneWayDuration }];
+
+    // Map vehicleCategory to backend categoryId
+    const categoryMap: Record<string, string> = {
+      suv: "suv",
+      pickup: "pickup",
+      microbus: "microbus",
+    };
+    const categoryId = categoryMap[vehicleCategory] ?? vehicleCategory;
+
+    let cancelled = false;
+    setQuoteLoading(true);
+    getFareQuoteCallable({ legs, categoryId })
+      .then((res) => {
+        if (!cancelled) {
+          setBackendQuote(res.data.quote as any);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.warn("[NuevaSolicitud] getFareQuote fallback:", err?.message);
+          setBackendQuote(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [effectiveOneWayKm, vehicleCategory, roundTrip, tariffBreakdown.estimatedDurationMinutes]);
 
   const selectedCompany = companies.find((c) => c.id === companyId);
   const selectedCostCenter = costCenters.find((c) => c.id === costCenterId);
@@ -885,7 +940,7 @@ const NuevaSolicitudB2BPage = () => {
                       Distancia Total Facturable:
                     </Typography>
                     <Typography variant="body2" fontWeight={700}>
-                      {tariffBreakdown.billableDistanceKm} km
+                      {backendQuote ? backendQuote.chargedDistance.toFixed(1) : tariffBreakdown.billableDistanceKm} km
                     </Typography>
                   </Stack>
 
@@ -905,22 +960,33 @@ const NuevaSolicitudB2BPage = () => {
                       Tarifa por Kilómetro:
                     </Typography>
                     <Typography variant="body2" fontWeight={600}>
-                      ${tariffBreakdown.ratePerKm.toFixed(2)} USD / km
+                      ${backendQuote ? backendQuote.appliedFareRate.toFixed(2) : tariffBreakdown.ratePerKm.toFixed(2)} USD / km
                     </Typography>
                   </Stack>
 
                   <Stack direction="row" justifyContent="space-between">
                     <Typography variant="body2" color="textSecondary">
-                      Tarifa Mínima ({tariffBreakdown.baseDistanceKm} km):
+                      Tarifa Mínima ({backendQuote ? `${backendQuote.minimumDistance} km` : `${tariffBreakdown.baseDistanceKm} km`}):
                     </Typography>
                     <Typography variant="body2" fontWeight={600}>
                       ${tariffBreakdown.minFare.toFixed(2)} USD
                     </Typography>
                   </Stack>
 
+                  {backendQuote?.taxAmount != null && backendQuote.taxAmount > 0 && (
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography variant="body2" color="textSecondary">
+                        IVA ({((backendQuote.taxRate ?? 0) * 100).toFixed(0)}%):
+                      </Typography>
+                      <Typography variant="body2" fontWeight={600}>
+                        ${backendQuote.taxAmount.toFixed(2)} USD
+                      </Typography>
+                    </Stack>
+                  )}
+
                   <Box
                     sx={{
-                      bgcolor: "#f0f7ff",
+                      bgcolor: backendQuote ? "#f0f7ff" : "#f5f5f5",
                       p: 2,
                       borderRadius: 2,
                       mt: 1,
@@ -932,19 +998,29 @@ const NuevaSolicitudB2BPage = () => {
                       color="textSecondary"
                       fontWeight={700}
                     >
-                      {isEn
+                      {quoteLoading
+                        ? "CALCULANDO COTIZACIÓN OFICIAL..."
+                        : backendQuote
+                        ? isEn
+                          ? "OFFICIAL SERVICE TOTAL (BACKEND QUOTE)"
+                          : "TOTAL OFICIAL DEL SERVICIO (COTIZACIÓN BACKEND)"
+                        : isEn
                         ? "ESTIMATED SERVICE TOTAL (FIXED TARIFF PLAN)"
                         : "TOTAL ESTIMADO DEL SERVICIO (TARIFA FIJA)"}
                     </Typography>
                     <Typography
                       variant="h3"
                       fontWeight={800}
-                      color="primary.main"
+                      color={backendQuote ? "primary.main" : "text.secondary"}
                     >
-                      ${tariffBreakdown.finalFare.toFixed(2)}
+                      ${(backendQuote ? backendQuote.totalAmount : tariffBreakdown.finalFare).toFixed(2)}
                     </Typography>
                     <Typography variant="caption" color="textSecondary" display="block">
-                      {tariffBreakdown.breakdownSummary}
+                      {backendQuote
+                        ? backendQuote.minimumApplied
+                          ? `Tarifa mínima aplicada ($${backendQuote.farePrice.toFixed(2)} USD cubre hasta ${backendQuote.minimumDistance} km · Ruta: ${backendQuote.chargedDistance.toFixed(1)} km)`
+                          : `Tarifa real aplicada (${backendQuote.chargedDistance.toFixed(1)} km × $${backendQuote.appliedFareRate.toFixed(2)}/km)`
+                        : tariffBreakdown.breakdownSummary}
                     </Typography>
                   </Box>
 
