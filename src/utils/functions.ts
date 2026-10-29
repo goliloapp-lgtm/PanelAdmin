@@ -172,6 +172,50 @@ export const confirmAccountDeletionCallable = httpsCallable<ConfirmAccountDeleti
 
 // --- Hito 2 Trips, B2B & History Callables (CF-08, CF-13, CF-19, CF-22, CF-23) ---
 
+// --- CF-38: getFareQuote ---
+export interface GetFareQuoteLegInput {
+  distance: number;
+  durationMinutes: number;
+}
+
+export interface GetFareQuoteParams {
+  legs: GetFareQuoteLegInput[];
+  categoryId?: string;
+}
+
+export interface FareQuote {
+  totalAmount: number;
+  farePrice: number;
+  driverEarning: number;
+  platformEarning: number;
+  driverShareRate: number;
+  taxAmount: number;
+  taxRate: number;
+  discountAmount: number;
+  discountRate: number;
+  baseAmount: number;
+  commissionAmount: number;
+  commissionRate: number;
+  appliedFareRate: number;
+  chargedDistance: number;
+  minimumDistance: number;
+  minimumApplied: boolean;
+  currency: string;
+  distanceUnit: string;
+  [key: string]: any;
+}
+
+export interface GetFareQuoteResult {
+  quote: FareQuote;
+  countryId: string;
+  flow: "direct" | "b2b";
+}
+
+export const getFareQuoteCallable = httpsCallable<GetFareQuoteParams, GetFareQuoteResult>(
+  functions,
+  "getFareQuote"
+);
+
 export interface CreateTripLegInput {
   distance: number;
   durationMinutes: number;
