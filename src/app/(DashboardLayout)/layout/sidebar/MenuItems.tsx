@@ -135,13 +135,6 @@ const Menuitems = [
   },
   {
     id: uniqueId(),
-    title: "Documentos SV",
-    titleEn: "SV Documents",
-    icon: IconFileCheck,
-    href: "/DocumentosSV",
-  },
-  {
-    id: uniqueId(),
     title: "Solicitudes y Monitoreo",
     titleEn: "Requests & Monitoring",
     icon: IconClipboardList,

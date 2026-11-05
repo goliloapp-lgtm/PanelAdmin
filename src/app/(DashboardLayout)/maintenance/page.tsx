@@ -113,9 +113,7 @@ export default function MaintenancePage() {
     setLoadingAction("welcome-email");
     try {
       const res = await sendWelcomeEmailCallable({
-        email: welcomeEmail,
         displayName: welcomeName || undefined,
-        locale: welcomeLocale,
       });
       if (res.data.success) {
         toast.success(res.data.message || "Correo de bienvenida enviado!");
@@ -139,7 +137,6 @@ export default function MaintenancePage() {
     try {
       const res = await requestEmailVerificationCodeCallable({
         email: verifyEmail,
-        locale: verifyLocale,
       });
       if (res.data.success) {
         toast.success(res.data.message || "Código de verificación enviado!");

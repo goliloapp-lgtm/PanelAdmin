@@ -10,6 +10,18 @@ export const LILO_DIRECT_CONTACT = {
   email: "corporativo@lilo.app",
 };
 
+/**
+ * Configuración oficial de restricciones de reservas corporativas B2B (Acuerdos comerciales El Salvador 2026)
+ */
+export const B2B_RESERVATION_CONFIG = {
+  allowImmediate: false, // Inmediatos inhabilitados hasta contar con flota cercana en zona
+  minAdvanceHours: 3,    // Anticipación mínima general obligatoria (3 horas)
+  corporateRecommendedHours: 6, // Anticipación recomendada para clientes corporativos (6 horas)
+};
+
+export const CAPACITY_EXCEEDED_MESSAGE_ES =
+  "Para viajes de más de 12 pasajeros, contáctenos por WhatsApp o llamada y con gusto le ayudaremos de inmediato.\nEstamos para servirle.";
+
 export interface B2BTariffRule {
   category: VehicleCategory;
   label: string;

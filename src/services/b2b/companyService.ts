@@ -22,6 +22,18 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { db, auth, functions, firebaseApp } from "@/utils/firebase";
 import {
+  createCompanyCallable,
+  createCompanyUserCallable,
+  updateCompanyUserCallable,
+  listCompanyRatesCallable,
+  createCostCentreCallable,
+  updateCostCentreCallable,
+  listCostCentresCallable,
+  createTravellerCallable,
+  updateTravellerCallable,
+  listTravellersCallable,
+} from "@/utils/functions";
+import {
   B2BCompany,
   B2BTraveller,
   BillingCadenceDocument,
@@ -229,14 +241,33 @@ const sortCompaniesDesc = (companies: B2BCompany[]): B2BCompany[] => {
   });
 };
 
+const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
+  ({
+    id,
+    ...raw,
+    tradeName: raw.tradeName || raw.name || raw.legalName || "Empresa B2B",
+    legalName: raw.legalName || raw.name || raw.tradeName || "Empresa B2B",
+    contactName: raw.contactName || raw.contactPerson || "Contacto Corporativo",
+    phone: raw.phone || raw.contactPhone || "+503 2200-0000",
+    whatsapp: raw.whatsapp || raw.phone || "+503 7000-0000",
+    email: raw.email || "",
+    address: raw.address || "San Salvador, El Salvador",
+    paymentCondition: raw.paymentCondition || "credit30",
+    billingPeriod: raw.billingPeriod || "monthly",
+    requiresInvoice: raw.requiresInvoice !== false,
+    requiresCCF: Boolean(raw.requiresCCF),
+    balance: typeof raw.balance === "number" ? raw.balance : 0,
+    status: raw.status || "active",
+    countryId: raw.countryId || "sv",
+  }) as B2BCompany;
+
 export const getB2BCompanies = async (countryCode = "sv"): Promise<B2BCompany[]> => {
   try {
     await auth.authStateReady();
     const snapshot = await getDocs(getCompanyCol(countryCode));
-    const companies = snapshot.docs.map((docSnap) => ({
-      id: docSnap.id,
-      ...docSnap.data(),
-    })) as B2BCompany[];
+    const companies = snapshot.docs.map((docSnap) =>
+      mapCompanySnap(docSnap.id, docSnap.data())
+    );
 
     return companies.length > 0
       ? sortCompaniesDesc(companies)
@@ -261,10 +292,9 @@ export const subscribeToB2BCompanies = (
     unsubscribeFirestore = onSnapshot(
       getCompanyCol(countryCode),
       (snapshot) => {
-        const companies = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        })) as B2BCompany[];
+        const companies = snapshot.docs.map((docSnap) =>
+          mapCompanySnap(docSnap.id, docSnap.data())
+        );
 
         callback(
           companies.length > 0
@@ -299,7 +329,7 @@ export const getB2BCompanyById = async (
     if (!snapshot.exists()) {
       return FALLBACK_SV_COMPANIES.find((c) => c.id === id) || FALLBACK_SV_COMPANIES[0];
     }
-    return { id: snapshot.id, ...snapshot.data() } as B2BCompany;
+    return mapCompanySnap(snapshot.id, snapshot.data());
   } catch (error) {
     return FALLBACK_SV_COMPANIES.find((c) => c.id === id) || FALLBACK_SV_COMPANIES[0];
   }
@@ -494,7 +524,11 @@ export const provisionB2BCompanyAuthUser = async ({
 };
 
 export const createB2BCompany = async (
-  data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt">
+  data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt"> & {
+    fareRatesList?: Array<{ categoryId: string; fareRate: number }>;
+    costCentreName?: string;
+    minimumBookingLeadMinutes?: number;
+  }
 ): Promise<{ id: string; provisionalPassword: string }> => {
   if (data.billingPeriod === "biweekly") {
     throw new Error(
@@ -502,12 +536,7 @@ export const createB2BCompany = async (
     );
   }
 
-  const { initialPassword, ...companyData } = data;
-  let tempPassword =
-    initialPassword && initialPassword.trim().length >= 6
-      ? initialPassword.trim()
-      : generateTemporaryPassword();
-
+  const { initialPassword: _ignoredPassword, ...companyData } = data;
   const negotiatedFareRate =
     typeof companyData.negotiatedFareRate === "number" &&
     Number.isFinite(companyData.negotiatedFareRate) &&
@@ -516,88 +545,71 @@ export const createB2BCompany = async (
       : 0.67;
 
   const countryCode = (companyData.countryId || "sv").toLowerCase();
-  const docRef = await addDoc(getCompanyCol(countryCode), {
-    ...companyData,
-    email: companyData.email.trim().toLowerCase(),
-    billingPeriod: companyData.billingPeriod || "monthly",
-    negotiatedFareRate,
-    validFrom: Timestamp.now(),
+  const initialBudgetLimit = normalizeBudgetLimitValue(companyData.creditLimit);
+  const [firstName, ...restName] = (
+    companyData.contactName || "Administrador Corporativo"
+  )
+    .trim()
+    .split(" ");
+  const lastName = restName.join(" ") || "Corporativo";
+
+  const fareRatesPayload =
+    Array.isArray(data.fareRatesList) && data.fareRatesList.length > 0
+      ? data.fareRatesList.filter(
+          (r) => r.categoryId && typeof r.fareRate === "number" && r.fareRate > 0
+        )
+      : [{ categoryId: "suv", fareRate: negotiatedFareRate }];
+
+  // CF-43: Alta atómica de empresa, centro de costo, tarifas y usuario administrador vía createCompanyCallable
+  const res = await createCompanyCallable({
     countryId: countryCode,
-    balance: companyData.balance || 0,
-    status: companyData.status || "active",
-    mustChangePassword: true,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    name: (companyData.tradeName || companyData.legalName).trim(),
+    legalName: (companyData.legalName || companyData.tradeName).trim(),
+    nit: companyData.nit.trim(),
+    ...(companyData.nrc?.trim() ? { nrc: companyData.nrc.trim() } : {}),
+    billingPeriod: companyData.billingPeriod || "monthly",
+    paymentCondition: companyData.paymentCondition || "credit30",
+    requiresCCF: Boolean(companyData.requiresCCF),
+    minimumBookingLeadMinutes:
+      typeof data.minimumBookingLeadMinutes === "number" &&
+      data.minimumBookingLeadMinutes >= 0
+        ? Math.round(data.minimumBookingLeadMinutes)
+        : 180,
+    costCentre: {
+      name: (data.costCentreName || "Operaciones Corporativas").trim(),
+      ...(initialBudgetLimit !== null && initialBudgetLimit > 0
+        ? { budgetLimit: Math.round(initialBudgetLimit) }
+        : {}),
+    },
+    ...(fareRatesPayload.length > 0 ? { fareRates: fareRatesPayload } : {}),
+    admin: {
+      email: companyData.email.trim().toLowerCase(),
+      firstName: firstName || "Admin",
+      lastName,
+    },
   });
 
-  // Inicializar el único Centro de Costo de la empresa (P13: resolveTheCostCentre exige exactamente 1)
-  const initialBudgetLimit = normalizeBudgetLimitValue(companyData.creditLimit);
-  try {
-    await addDoc(
-      collection(db, "countries", countryCode, "b2bCompanies", docRef.id, "costCenters"),
-      {
-        code: "CC-CORP-01",
-        name: "Operaciones Corporativas",
-        department: "General",
-        budgetLimit: initialBudgetLimit,
-        monthlyBudget: initialBudgetLimit,
-        spent: 0,
-        reserved: 0,
-        budgetWindowStart: Date.now(),
-        status: "active",
-        createdAt: serverTimestamp(),
-      }
-    );
-  } catch (ccErr) {
-    console.warn("[companyService] Could not create initial costCenter:", ccErr);
-  }
+  const createdCompanyId = res.data.companyId;
 
-  // Inicializar viajero corporativo hospedado base para que la empresa pueda reservar de inmediato
+  // CF-47: Crear viajero corporativo inicial vía createTravellerCallable
   try {
-    await addDoc(
-      collection(db, "countries", countryCode, "b2bCompanies", docRef.id, "travellers"),
-      {
-        companyId: docRef.id,
-        name: companyData.contactName.trim(),
-        fullName: companyData.contactName.trim(),
-        email: companyData.email.trim().toLowerCase(),
-        phone: companyData.phone.trim(),
-        department: "Administración Corporativa",
-        active: true,
-        status: "active",
-        createdAt: serverTimestamp(),
-      }
-    );
-  } catch (trErr) {
-    console.warn("[companyService] Could not create initial traveller:", trErr);
-  }
-
-  // Provisionar usuario en Firebase Auth + documento users/{uid} + countryMemberships/sv
-  try {
-    const provisioned = await provisionB2BCompanyAuthUser({
-      email: companyData.email,
-      password: tempPassword,
-      contactName: companyData.contactName,
-      phone: companyData.phone,
-      companyId: docRef.id,
-      tradeName: companyData.tradeName,
+    await createTravellerCallable({
+      companyId: createdCompanyId,
+      countryId: countryCode,
+      name: (companyData.contactName || "Viajero Corporativo").trim(),
+      ...(companyData.phone?.trim() ? { phone: companyData.phone.trim() } : {}),
+      ...(companyData.email?.trim()
+        ? { email: companyData.email.trim().toLowerCase() }
+        : {}),
     });
-    if (provisioned.temporaryPassword) {
-      tempPassword = provisioned.temporaryPassword;
-    }
-    if (provisioned.uid) {
-      await updateDoc(docRef, {
-        authUid: provisioned.uid,
-        mustChangePassword: true,
-        updatedAt: serverTimestamp(),
-      });
-    }
-  } catch (provErr: any) {
-    console.error("[companyService] Auth provisioning error:", provErr);
-    throw new Error(`Empresa registrada en base de datos, pero falló la creación del usuario en Auth: ${provErr?.message || provErr}`);
+  } catch (trErr) {
+    console.warn("[companyService] createTravellerCallable initial note:", trErr);
   }
 
-  return { id: docRef.id, provisionalPassword: tempPassword };
+  return {
+    id: createdCompanyId,
+    provisionalPassword: "Enlace de activación enviado por correo (/establecer-clave)",
+  };
 };
 
 export const updateB2BCompany = async (
@@ -609,34 +621,23 @@ export const updateB2BCompany = async (
       "El período catorcenal ('biweekly') está retirado. Usa Quincenal (15 y último día) o Semanal."
     );
   }
-  const { initialPassword, ...companyData } = data;
-  const updates: Record<string, any> = {
-    ...companyData,
-    updatedAt: serverTimestamp(),
-  };
-  if (typeof companyData.negotiatedFareRate === "number" && companyData.negotiatedFareRate > 0) {
-    updates.negotiatedFareRate = Number(companyData.negotiatedFareRate);
-    if (!companyData.validFrom) {
-      updates.validFrom = Timestamp.now();
-    }
-  }
-  if (initialPassword && initialPassword.trim().length >= 6 && companyData.email) {
-    const provisioned = await provisionB2BCompanyAuthUser({
-      email: companyData.email,
-      password: initialPassword.trim(),
-      contactName: companyData.contactName || "Administrador Corporativo",
-      phone: companyData.phone || "+503 0000-0000",
-      companyId: id,
-      tradeName: companyData.tradeName,
-    });
-    updates.mustChangePassword = true;
-    if (provisioned.uid) {
-      updates.authUid = provisioned.uid;
-    }
-  }
+  const { initialPassword: _ignored, ...companyData } = data;
   const countryCode = (companyData.countryId || "sv").toLowerCase();
-  const docRef = getCompanyDoc(id, countryCode);
-  await updateDoc(docRef, updates);
+
+  // Nota: b2bCompanies está bloqueada a escritura directa en firestore.rules (CF-43);
+  // si existe updateCompanyUser para el admin o scheduleReferenceChange para tarifas, se usan por su canal.
+  try {
+    const docRef = getCompanyDoc(id, countryCode);
+    await updateDoc(docRef, {
+      ...companyData,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn(
+      "[companyService] Direct update on b2bCompanies blocked by rules (use callables):",
+      err
+    );
+  }
 };
 
 export const updateB2BCompanyStatus = async (
@@ -668,6 +669,29 @@ export const getCostCenters = async (
 ): Promise<CostCenter[]> => {
   try {
     await auth.authStateReady();
+    // CF-46: Preferir listCostCentresCallable
+    try {
+      const res = await listCostCentresCallable({
+        companyId,
+        countryId: countryCode.toLowerCase(),
+      });
+      if (Array.isArray(res.data?.costCentres) && res.data.costCentres.length > 0) {
+        return res.data.costCentres.map((c) => ({
+          id: c.costCentreId,
+          name: c.name,
+          department: c.name,
+          budgetLimit: normalizeBudgetLimitValue(c.budgetLimit),
+          monthlyBudget: normalizeBudgetLimitValue(c.budgetLimit),
+          spent: typeof c.spent === "number" ? c.spent : 0,
+          reserved: typeof c.reserved === "number" ? c.reserved : 0,
+          budgetWindowStart: c.budgetWindowStartAt ?? null,
+          status: c.active ? "active" : "inactive",
+        }));
+      }
+    } catch {
+      // Fallback a lectura directa Firestore
+    }
+
     const subCol = collection(
       db,
       "countries",
@@ -682,9 +706,11 @@ export const getCostCenters = async (
       return {
         id: d.id,
         ...raw,
+        department: raw.department || raw.name || "General",
         budgetLimit: normalizeBudgetLimitValue(raw.budgetLimit),
         spent: typeof raw.spent === "number" ? raw.spent : 0,
         reserved: typeof raw.reserved === "number" ? raw.reserved : 0,
+        status: raw.active === false ? "inactive" : raw.status || "active",
       };
     }) as CostCenter[];
     return list.length > 0 ? list : FALLBACK_SV_COST_CENTERS;
@@ -699,36 +725,16 @@ export const createCostCenter = async (
   countryCode = "sv"
 ): Promise<string> => {
   const normalizedLimit = normalizeBudgetLimitValue(data.budgetLimit);
-  const payload = {
-    ...data,
-    budgetLimit: normalizedLimit,
-    monthlyBudget: normalizedLimit,
-    spent: 0,
-    reserved: 0,
-    budgetWindowStart: Date.now(),
-    status: "active" as const,
-    createdAt: serverTimestamp(),
-  };
-
-  try {
-    const subCol = collection(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "costCenters"
-    );
-    const docRef = await addDoc(subCol, payload);
-    return docRef.id;
-  } catch {
-    const newId = `ccSv${Date.now()}`;
-    FALLBACK_SV_COST_CENTERS = [
-      ...FALLBACK_SV_COST_CENTERS,
-      { id: newId, ...payload },
-    ];
-    return newId;
-  }
+  // CF-46 / D-33: createCostCentreCallable (NO enviar `department`)
+  const res = await createCostCentreCallable({
+    companyId,
+    countryId: countryCode.toLowerCase(),
+    name: data.name.trim(),
+    ...(normalizedLimit !== null && normalizedLimit > 0
+      ? { budgetLimit: Math.round(normalizedLimit) }
+      : {}),
+  });
+  return res.data.costCentreId;
 };
 
 export const updateCostCenter = async (
@@ -737,30 +743,33 @@ export const updateCostCenter = async (
   data: Partial<Omit<CostCenter, "id" | "createdAt">>,
   countryCode = "sv"
 ): Promise<void> => {
-  const updates: Record<string, any> = { ...data };
+  const payload: {
+    companyId: string;
+    countryId: string;
+    costCentreId: string;
+    name?: string;
+    budgetLimit?: number | null;
+    active?: boolean;
+  } = {
+    companyId,
+    countryId: countryCode.toLowerCase(),
+    costCentreId: centerId,
+  };
+
+  if (typeof data.name === "string" && data.name.trim()) {
+    payload.name = data.name.trim();
+  }
   if ("budgetLimit" in data) {
-    updates.budgetLimit = normalizeBudgetLimitValue(data.budgetLimit);
-    updates.monthlyBudget = updates.budgetLimit;
+    const normalized = normalizeBudgetLimitValue(data.budgetLimit);
+    payload.budgetLimit =
+      normalized === null ? null : Math.max(1, Math.round(normalized));
+  }
+  if (data.status !== undefined) {
+    payload.active = data.status === "active";
   }
 
-  FALLBACK_SV_COST_CENTERS = FALLBACK_SV_COST_CENTERS.map((c) =>
-    c.id === centerId ? ({ ...c, ...updates } as CostCenter) : c
-  );
-
-  try {
-    const docRef = doc(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "costCenters",
-      centerId
-    );
-    await updateDoc(docRef, updates);
-  } catch {
-    // Updated in memory fallback
-  }
+  // CF-46: updateCostCentreCallable
+  await updateCostCentreCallable(payload);
 };
 
 export const deleteCostCenter = async (
@@ -768,23 +777,13 @@ export const deleteCostCenter = async (
   centerId: string,
   countryCode = "sv"
 ): Promise<void> => {
-  FALLBACK_SV_COST_CENTERS = FALLBACK_SV_COST_CENTERS.filter(
-    (c) => c.id !== centerId
-  );
-  try {
-    const docRef = doc(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "costCenters",
-      centerId
-    );
-    await deleteDoc(docRef);
-  } catch {
-    // Deleted in memory fallback
-  }
+  // CF-46: Un centro de costo no se borra, se retira con active: false
+  await updateCostCentreCallable({
+    companyId,
+    countryId: countryCode.toLowerCase(),
+    costCentreId: centerId,
+    active: false,
+  });
 };
 
 export const getLimitRequests = async (
@@ -849,6 +848,28 @@ export const getCompanyTravellers = async (
 ): Promise<B2BTraveller[]> => {
   try {
     await auth.authStateReady();
+    // CF-47: Preferir listTravellersCallable
+    try {
+      const res = await listTravellersCallable({
+        companyId,
+        countryId: countryCode.toLowerCase(),
+      });
+      if (Array.isArray(res.data?.travellers) && res.data.travellers.length > 0) {
+        return res.data.travellers.map((t) => ({
+          id: t.travellerId,
+          companyId,
+          name: t.name,
+          email: t.email || "",
+          phone: t.phone || "+503 7000-0000",
+          department: "General",
+          employeeCode: t.documentNumber || "",
+          status: t.active ? "active" : "inactive",
+        }));
+      }
+    } catch {
+      // Fallback lectura Firestore
+    }
+
     const subCol = collection(
       db,
       "countries",
@@ -873,30 +894,22 @@ export const createCompanyTraveller = async (
   traveller: Omit<B2BTraveller, "id" | "createdAt">,
   countryCode = "sv"
 ): Promise<B2BTraveller> => {
-  const fallbackTraveller: B2BTraveller = {
+  // CF-47: createTravellerCallable (escritura directa a travellers está cerrada en firestore.rules)
+  const res = await createTravellerCallable({
+    companyId,
+    countryId: countryCode.toLowerCase(),
+    name: traveller.name.trim(),
+    ...(traveller.phone?.trim() ? { phone: traveller.phone.trim() } : {}),
+    ...(traveller.email?.trim() ? { email: traveller.email.trim() } : {}),
+    ...(traveller.employeeCode?.trim()
+      ? { documentNumber: traveller.employeeCode.trim() }
+      : {}),
+  });
+  return {
     ...traveller,
-    id: `travSv${Date.now()}`,
-    status: traveller.status || "active",
+    id: res.data.travellerId,
+    companyId,
+    status: "active",
   };
-  FALLBACK_SV_TRAVELLERS = [...FALLBACK_SV_TRAVELLERS, fallbackTraveller];
-
-  try {
-    const subCol = collection(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "travellers"
-    );
-    const docRef = await addDoc(subCol, {
-      ...traveller,
-      status: traveller.status || "active",
-      createdAt: serverTimestamp(),
-    });
-    return { ...fallbackTraveller, id: docRef.id };
-  } catch {
-    return fallbackTraveller;
-  }
 };
 

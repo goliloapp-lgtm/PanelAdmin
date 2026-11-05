@@ -11,6 +11,9 @@ import {
   CardContent,
   TextField,
   MenuItem,
+  Menu,
+  ListItemIcon,
+  ListItemText,
   Switch,
   FormControlLabel,
   IconButton,
@@ -28,6 +31,8 @@ import {
   IconPackage,
   IconCalculator,
   IconCheck,
+  IconBuildingSkyscraper,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
 import PageContainer from "@/app/(DashboardLayout)/components/container/PageContainer";
@@ -50,12 +55,16 @@ import {
   EL_SALVADOR_B2B_TARIFFS,
   MAX_VEHICLE_PASSENGER_CAPACITY,
   LILO_DIRECT_CONTACT,
+  B2B_RESERVATION_CONFIG,
+  CAPACITY_EXCEEDED_MESSAGE_ES,
   calculateMultiStopRouteDistanceKm,
   calculateB2BTariff,
   getAllowedCategoriesForPassengers,
 } from "@/utils/b2bPricing";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { getFareQuoteCallable } from "@/utils/functions";
+import GoogleAddressAutocomplete from "../../_components/GoogleAddressAutocomplete";
+import GoogleRouteMap from "../../_components/GoogleRouteMap";
 
 const NuevaSolicitudB2BPage = () => {
   const router = useRouter();
@@ -96,25 +105,47 @@ const NuevaSolicitudB2BPage = () => {
   const [cargoDescription, setCargoDescription] = useState("");
 
   const [roundTrip, setRoundTrip] = useState(false);
-  const [isImmediate, setIsImmediate] = useState(true);
+  const [minAdvanceHours, setMinAdvanceHours] = useState<number>(3);
+  const [isImmediate, setIsImmediate] = useState(false); // Inmediatos inhabilitados por política comercial El Salvador
   const [scheduledDateTime, setScheduledDateTime] = useState(() => {
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    return d.toISOString().slice(0, 16);
+    const d = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   });
 
   // Origen, Paradas Intermedias y Destino
   const [originIndex, setOriginIndex] = useState<number>(0);
-  const [originCustomAddress, setOriginCustomAddress] = useState(
-    EL_SALVADOR_LOCATIONS[0].address
-  );
+  const [originCoord, setOriginCoord] = useState<{
+    lat: number;
+    lng: number;
+    address: string;
+  }>({
+    lat: EL_SALVADOR_LOCATIONS[0].lat,
+    lng: EL_SALVADOR_LOCATIONS[0].lng,
+    address: EL_SALVADOR_LOCATIONS[0].address,
+  });
+
   const [destinationIndex, setDestinationIndex] = useState<number>(7);
-  const [destinationCustomAddress, setDestinationCustomAddress] = useState(
-    EL_SALVADOR_LOCATIONS[7].address
-  );
+  const [destinationCoord, setDestinationCoord] = useState<{
+    lat: number;
+    lng: number;
+    address: string;
+  }>({
+    lat: EL_SALVADOR_LOCATIONS[7].lat,
+    lng: EL_SALVADOR_LOCATIONS[7].lng,
+    address: EL_SALVADOR_LOCATIONS[7].address,
+  });
 
   const [stops, setStops] = useState<
-    Array<{ presetIndex: number; address: string }>
+    Array<{ presetIndex: number; address: string; lat: number; lng: number }>
   >([]);
+
+  const [googleDistanceKm, setGoogleDistanceKm] = useState<number | null>(null);
+  const [googleDurationMinutes, setGoogleDurationMinutes] = useState<number | null>(null);
+
+  const [originMenuAnchor, setOriginMenuAnchor] = useState<null | HTMLElement>(null);
+  const [destMenuAnchor, setDestMenuAnchor] = useState<null | HTMLElement>(null);
+  const [stopMenuAnchor, setStopMenuAnchor] = useState<{ index: number; el: HTMLElement } | null>(null);
 
   const [manualDistanceOverrideKm, setManualDistanceOverrideKm] = useState<
     number | ""
@@ -170,23 +201,17 @@ const NuevaSolicitudB2BPage = () => {
 
   // Calcular distancia automática entre Origen -> Paradas -> Destino
   const autoOneWayDistanceKm = useMemo(() => {
-    const originPreset =
-      EL_SALVADOR_LOCATIONS[originIndex] || EL_SALVADOR_LOCATIONS[0];
-    const destPreset =
-      EL_SALVADOR_LOCATIONS[destinationIndex] || EL_SALVADOR_LOCATIONS[1];
-
+    if (googleDistanceKm && googleDistanceKm > 0) {
+      return roundTrip ? Number((googleDistanceKm / 2).toFixed(1)) : googleDistanceKm;
+    }
     const points = [
-      { lat: originPreset.lat, lng: originPreset.lng },
-      ...stops.map((st) => {
-        const p =
-          EL_SALVADOR_LOCATIONS[st.presetIndex] || EL_SALVADOR_LOCATIONS[2];
-        return { lat: p.lat, lng: p.lng };
-      }),
-      { lat: destPreset.lat, lng: destPreset.lng },
+      { lat: originCoord.lat, lng: originCoord.lng },
+      ...stops.map((st) => ({ lat: st.lat, lng: st.lng })),
+      { lat: destinationCoord.lat, lng: destinationCoord.lng },
     ];
 
     return calculateMultiStopRouteDistanceKm(points);
-  }, [originIndex, destinationIndex, stops]);
+  }, [googleDistanceKm, roundTrip, originCoord, destinationCoord, stops]);
 
   const effectiveOneWayKm =
     manualDistanceOverrideKm !== "" && Number(manualDistanceOverrideKm) > 0
@@ -250,6 +275,8 @@ const NuevaSolicitudB2BPage = () => {
       {
         presetIndex: defaultStopIdx,
         address: EL_SALVADOR_LOCATIONS[defaultStopIdx].address,
+        lat: EL_SALVADOR_LOCATIONS[defaultStopIdx].lat,
+        lng: EL_SALVADOR_LOCATIONS[defaultStopIdx].lng,
       },
     ]);
   };
@@ -263,16 +290,28 @@ const NuevaSolicitudB2BPage = () => {
     if (passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY) {
       setError(
         isEn
-          ? `Requested passenger count (${passengersCount}) exceeds maximum vehicle capacity (${MAX_VEHICLE_PASSENGER_CAPACITY}). Please contact Lilo directly at ${LILO_DIRECT_CONTACT.whatsapp} or ${LILO_DIRECT_CONTACT.email}.`
-          : `La capacidad solicitada (${passengersCount} pasajeros) excede el límite máximo de los vehículos (${MAX_VEHICLE_PASSENGER_CAPACITY} pasajeros). Por favor comunícate directamente con Lilo (${LILO_DIRECT_CONTACT.whatsapp} / ${LILO_DIRECT_CONTACT.email}).`
+          ? "For trips with more than 12 passengers, please contact us by WhatsApp or phone and we will gladly assist you immediately.\nWe are at your service."
+          : "Para viajes de más de 12 pasajeros, contáctenos por WhatsApp o llamada y con gusto le ayudaremos de inmediato.\nEstamos para servirle."
       );
       return;
+    }
+    if (!isImmediate) {
+      const scheduledMs = new Date(scheduledDateTime).getTime();
+      const minRequiredMs = Date.now() + minAdvanceHours * 60 * 60 * 1000 - 60000;
+      if (isNaN(scheduledMs) || scheduledMs < minRequiredMs) {
+        setError(
+          isEn
+            ? `Scheduled reservations must be booked at least ${minAdvanceHours} hours in advance.`
+            : `Las reservas de viaje programadas deben tener al menos ${minAdvanceHours} horas de anticipación.`
+        );
+        return;
+      }
     }
     if (!selectedCompany) {
       setError("Selecciona una empresa corporativa B2B.");
       return;
     }
-    if (!originCustomAddress.trim() || !destinationCustomAddress.trim()) {
+    if (!originCoord.address.trim() || !destinationCoord.address.trim()) {
       setError("Ingresa la dirección de origen y destino.");
       return;
     }
@@ -281,32 +320,23 @@ const NuevaSolicitudB2BPage = () => {
     setError(null);
 
     try {
-      const originPreset =
-        EL_SALVADOR_LOCATIONS[originIndex] || EL_SALVADOR_LOCATIONS[0];
-      const destPreset =
-        EL_SALVADOR_LOCATIONS[destinationIndex] || EL_SALVADOR_LOCATIONS[1];
-
       const originPoint: RoutePoint = {
-        address: originCustomAddress.trim(),
-        lat: originPreset.lat,
-        lng: originPreset.lng,
+        address: originCoord.address.trim(),
+        lat: originCoord.lat,
+        lng: originCoord.lng,
       };
 
       const destPoint: RoutePoint = {
-        address: destinationCustomAddress.trim(),
-        lat: destPreset.lat,
-        lng: destPreset.lng,
+        address: destinationCoord.address.trim(),
+        lat: destinationCoord.lat,
+        lng: destinationCoord.lng,
       };
 
-      const stopPoints: RoutePoint[] = stops.map((s) => {
-        const p =
-          EL_SALVADOR_LOCATIONS[s.presetIndex] || EL_SALVADOR_LOCATIONS[2];
-        return {
-          address: s.address.trim(),
-          lat: p.lat,
-          lng: p.lng,
-        };
-      });
+      const stopPoints: RoutePoint[] = stops.map((s) => ({
+        address: s.address.trim(),
+        lat: s.lat,
+        lng: s.lng,
+      }));
 
       const passengerNames = passengerNamesInput
         .split(",")
@@ -525,39 +555,82 @@ const NuevaSolicitudB2BPage = () => {
                 }
               >
                 <Stack spacing={2.5}>
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, sm: 5 }}>
-                      <TextField
-                        select
-                        fullWidth
+                  {/* Origen con Google Places API y menú de Hubs frecuentes */}
+                  <Box>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.75}>
+                      <Typography variant="subtitle2" fontWeight={700}>
+                        Punto de Origen *
+                      </Typography>
+                      <Button
                         size="small"
-                        label="Punto de Referencia Origen (SV)"
-                        value={originIndex}
-                        onChange={(e) => {
-                          const idx = Number(e.target.value);
-                          setOriginIndex(idx);
-                          setOriginCustomAddress(
-                            EL_SALVADOR_LOCATIONS[idx].address
-                          );
+                        variant="text"
+                        startIcon={<IconBuildingSkyscraper size={15} color="#5D87FF" />}
+                        endIcon={<IconChevronDown size={14} />}
+                        onClick={(e) => setOriginMenuAnchor(e.currentTarget)}
+                        sx={{
+                          textTransform: "none",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          py: 0.25,
+                          px: 1,
+                          color: "primary.main",
+                          bgcolor: "#ECF2FF",
+                          borderRadius: 1.5,
+                          "&:hover": { bgcolor: "#DFE5EF" },
                         }}
                       >
+                        Hubs frecuentes SV
+                      </Button>
+                      <Menu
+                        anchorEl={originMenuAnchor}
+                        open={Boolean(originMenuAnchor)}
+                        onClose={() => setOriginMenuAnchor(null)}
+                        PaperProps={{ sx: { maxHeight: 340, width: 360, borderRadius: 2 } }}
+                      >
+                        <MenuItem disabled sx={{ opacity: 1, fontWeight: 700, fontSize: "0.75rem", color: "text.secondary" }}>
+                          PUNTOS CORPORATIVOS FRECUENTES (EL SALVADOR)
+                        </MenuItem>
+                        <Divider />
                         {EL_SALVADOR_LOCATIONS.map((loc, i) => (
-                          <MenuItem key={i} value={i}>
-                            {loc.label}
+                          <MenuItem
+                            key={i}
+                            dense
+                            selected={originCoord.address === loc.address}
+                            onClick={() => {
+                              setOriginCoord({
+                                address: loc.address,
+                                lat: loc.lat,
+                                lng: loc.lng,
+                              });
+                              setOriginMenuAnchor(null);
+                            }}
+                          >
+                            <ListItemIcon sx={{ minWidth: 26 }}>
+                              <IconMapPin size={16} color="#5D87FF" />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={loc.label}
+                              secondary={loc.address}
+                              primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
+                              secondaryTypographyProps={{ fontSize: "0.7rem", noWrap: true }}
+                            />
                           </MenuItem>
                         ))}
-                      </TextField>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 7 }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Dirección Exacta de Origen *"
-                        value={originCustomAddress}
-                        onChange={(e) => setOriginCustomAddress(e.target.value)}
-                      />
-                    </Grid>
-                  </Grid>
+                      </Menu>
+                    </Stack>
+                    <GoogleAddressAutocomplete
+                      placeholder="Buscar dirección o punto de interés (ej. WTC, Sheraton, Hilton, Calle El Mirador...)"
+                      value={originCoord.address}
+                      required
+                      onChange={(sel) => {
+                        setOriginCoord({
+                          address: sel.address,
+                          lat: sel.lat,
+                          lng: sel.lng,
+                        });
+                      }}
+                    />
+                  </Box>
 
                   {/* Paradas intermedias dinámicas */}
                   {stops.map((stop, idx) => (
@@ -566,105 +639,222 @@ const NuevaSolicitudB2BPage = () => {
                       variant="outlined"
                       sx={{ bgcolor: "#f8fafc", p: 1.5 }}
                     >
-                      <Grid container spacing={2} alignItems="center">
-                        <Grid size={{ xs: 12, sm: 5 }}>
-                          <TextField
-                            select
-                            fullWidth
+                      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.75}>
+                        <Typography variant="subtitle2" fontWeight={700} color="primary.main">
+                          Parada Intermedia #{idx + 1}
+                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Button
                             size="small"
-                            label={`Parada Intermedia #${idx + 1} (Referencia)`}
-                            value={stop.presetIndex}
-                            onChange={(e) => {
-                              const newIdx = Number(e.target.value);
-                              setStops((prev) =>
-                                prev.map((item, i) =>
-                                  i === idx
-                                    ? {
-                                        presetIndex: newIdx,
-                                        address:
-                                          EL_SALVADOR_LOCATIONS[newIdx].address,
-                                      }
-                                    : item
-                                )
-                              );
+                            variant="text"
+                            startIcon={<IconBuildingSkyscraper size={14} color="#5D87FF" />}
+                            endIcon={<IconChevronDown size={14} />}
+                            onClick={(e) => setStopMenuAnchor({ index: idx, el: e.currentTarget })}
+                            sx={{
+                              textTransform: "none",
+                              fontSize: "0.75rem",
+                              fontWeight: 600,
+                              py: 0.25,
+                              px: 1,
+                              color: "primary.main",
+                              bgcolor: "#ECF2FF",
+                              borderRadius: 1.5,
+                              "&:hover": { bgcolor: "#DFE5EF" },
                             }}
                           >
+                            Hubs SV
+                          </Button>
+                          <Menu
+                            anchorEl={stopMenuAnchor?.index === idx ? stopMenuAnchor.el : null}
+                            open={stopMenuAnchor?.index === idx}
+                            onClose={() => setStopMenuAnchor(null)}
+                            PaperProps={{ sx: { maxHeight: 340, width: 360, borderRadius: 2 } }}
+                          >
+                            <MenuItem disabled sx={{ opacity: 1, fontWeight: 700, fontSize: "0.75rem", color: "text.secondary" }}>
+                              SELECCIONAR PARADA CORPORATIVA
+                            </MenuItem>
+                            <Divider />
                             {EL_SALVADOR_LOCATIONS.map((loc, i) => (
-                              <MenuItem key={i} value={i}>
-                                {loc.label}
+                              <MenuItem
+                                key={i}
+                                dense
+                                selected={stop.address === loc.address}
+                                onClick={() => {
+                                  setStops((prev) =>
+                                    prev.map((item, itIdx) =>
+                                      itIdx === idx
+                                        ? {
+                                            ...item,
+                                            address: loc.address,
+                                            lat: loc.lat,
+                                            lng: loc.lng,
+                                          }
+                                        : item
+                                    )
+                                  );
+                                  setStopMenuAnchor(null);
+                                }}
+                              >
+                                <ListItemIcon sx={{ minWidth: 26 }}>
+                                  <IconMapPin size={16} color="#5D87FF" />
+                                </ListItemIcon>
+                                <ListItemText
+                                  primary={loc.label}
+                                  secondary={loc.address}
+                                  primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
+                                  secondaryTypographyProps={{ fontSize: "0.7rem", noWrap: true }}
+                                />
                               </MenuItem>
                             ))}
-                          </TextField>
-                        </Grid>
-                        <Grid size={{ xs: 10, sm: 6 }}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label={`Dirección Parada #${idx + 1}`}
-                            value={stop.address}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setStops((prev) =>
-                                prev.map((item, i) =>
-                                  i === idx ? { ...item, address: val } : item
-                                )
-                              );
-                            }}
-                          />
-                        </Grid>
-                        <Grid size={{ xs: 2, sm: 1 }} textAlign="right">
+                          </Menu>
                           <IconButton
                             color="error"
                             size="small"
                             onClick={() => handleRemoveStop(idx)}
+                            title="Eliminar parada"
                           >
-                            <IconTrash size={18} />
+                            <IconTrash size={16} />
                           </IconButton>
-                        </Grid>
-                      </Grid>
+                        </Stack>
+                      </Stack>
+                      <GoogleAddressAutocomplete
+                        placeholder="Buscar punto intermedio en El Salvador..."
+                        value={stop.address}
+                        onChange={(sel) => {
+                          setStops((prev) =>
+                            prev.map((item, i) =>
+                              i === idx
+                                ? {
+                                    ...item,
+                                    address: sel.address,
+                                    lat: sel.lat,
+                                    lng: sel.lng,
+                                  }
+                                : item
+                            )
+                          );
+                        }}
+                      />
                     </Card>
                   ))}
 
-                  <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, sm: 5 }}>
-                      <TextField
-                        select
-                        fullWidth
+                  {/* Destino con Google Places API y menú de Hubs frecuentes */}
+                  <Box>
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.75}>
+                      <Typography variant="subtitle2" fontWeight={700}>
+                        Punto de Destino *
+                      </Typography>
+                      <Button
                         size="small"
-                        label="Punto de Referencia Destino (SV)"
-                        value={destinationIndex}
-                        onChange={(e) => {
-                          const idx = Number(e.target.value);
-                          setDestinationIndex(idx);
-                          setDestinationCustomAddress(
-                            EL_SALVADOR_LOCATIONS[idx].address
-                          );
+                        variant="text"
+                        startIcon={<IconBuildingSkyscraper size={15} color="#5D87FF" />}
+                        endIcon={<IconChevronDown size={14} />}
+                        onClick={(e) => setDestMenuAnchor(e.currentTarget)}
+                        sx={{
+                          textTransform: "none",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          py: 0.25,
+                          px: 1,
+                          color: "primary.main",
+                          bgcolor: "#ECF2FF",
+                          borderRadius: 1.5,
+                          "&:hover": { bgcolor: "#DFE5EF" },
                         }}
                       >
+                        Hubs frecuentes SV
+                      </Button>
+                      <Menu
+                        anchorEl={destMenuAnchor}
+                        open={Boolean(destMenuAnchor)}
+                        onClose={() => setDestMenuAnchor(null)}
+                        PaperProps={{ sx: { maxHeight: 340, width: 360, borderRadius: 2 } }}
+                      >
+                        <MenuItem disabled sx={{ opacity: 1, fontWeight: 700, fontSize: "0.75rem", color: "text.secondary" }}>
+                          PUNTOS CORPORATIVOS FRECUENTES (EL SALVADOR)
+                        </MenuItem>
+                        <Divider />
                         {EL_SALVADOR_LOCATIONS.map((loc, i) => (
-                          <MenuItem key={i} value={i}>
-                            {loc.label}
+                          <MenuItem
+                            key={i}
+                            dense
+                            selected={destinationCoord.address === loc.address}
+                            onClick={() => {
+                              setDestinationCoord({
+                                address: loc.address,
+                                lat: loc.lat,
+                                lng: loc.lng,
+                              });
+                              setDestMenuAnchor(null);
+                            }}
+                          >
+                            <ListItemIcon sx={{ minWidth: 26 }}>
+                              <IconMapPin size={16} color="#5D87FF" />
+                            </ListItemIcon>
+                            <ListItemText
+                              primary={loc.label}
+                              secondary={loc.address}
+                              primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
+                              secondaryTypographyProps={{ fontSize: "0.7rem", noWrap: true }}
+                            />
                           </MenuItem>
                         ))}
-                      </TextField>
-                    </Grid>
-                    <Grid size={{ xs: 12, sm: 7 }}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Dirección Exacta de Destino *"
-                        value={destinationCustomAddress}
-                        onChange={(e) =>
-                          setDestinationCustomAddress(e.target.value)
-                        }
-                      />
-                    </Grid>
-                  </Grid>
+                      </Menu>
+                    </Stack>
+                    <GoogleAddressAutocomplete
+                      placeholder="Buscar destino en El Salvador (ej. Aeropuerto Comalapa, Zona Franca, Hotel...)"
+                      value={destinationCoord.address}
+                      required
+                      onChange={(sel) => {
+                        setDestinationCoord({
+                          address: sel.address,
+                          lat: sel.lat,
+                          lng: sel.lng,
+                        });
+                      }}
+                    />
+                  </Box>
+
+                  {/* Previsualización en Vivo con Google Route Map */}
+                  <Box sx={{ mt: 1 }}>
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      mb={1}
+                    >
+                      <Typography
+                        variant="caption"
+                        fontWeight={700}
+                        color="textSecondary"
+                        sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
+                      >
+                        <IconMapPin size={15} color="#5D87FF" />
+                        Ruta Vial en Tiempo Real (Google Maps Directions API)
+                      </Typography>
+                      {googleDistanceKm !== null && (
+                        <Typography variant="caption" fontWeight={700} color="success.main">
+                          Calculado por Google Maps
+                        </Typography>
+                      )}
+                    </Stack>
+                    <GoogleRouteMap
+                      origin={originCoord}
+                      destination={destinationCoord}
+                      stops={stops}
+                      roundTrip={roundTrip}
+                      height={260}
+                      onRouteCalculated={({ distanceKm, durationMinutes }) => {
+                        setGoogleDistanceKm(distanceKm);
+                        setGoogleDurationMinutes(durationMinutes);
+                      }}
+                    />
+                  </Box>
 
                   <Divider />
 
                   <Grid container spacing={2} alignItems="center">
-                    <Grid size={{ xs: 12, sm: 4 }}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                       <FormControlLabel
                         control={
                           <Switch
@@ -676,51 +866,54 @@ const NuevaSolicitudB2BPage = () => {
                         label="Viaje Ida y Vuelta (2x km)"
                       />
                     </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={isImmediate}
-                            onChange={(e) => setIsImmediate(e.target.checked)}
-                            color="secondary"
-                          />
-                        }
-                        label={
-                          isImmediate ? "Salida Inmediata" : "Viaje Programado"
-                        }
-                      />
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <Box display="flex" alignItems="center" gap={1}>
+                        <Chip
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          label="Viajes Inmediatos Inhabilitados"
+                          sx={{ fontWeight: 600 }}
+                        />
+                        <Typography variant="caption" color="textSecondary">
+                          (Hasta habilitación de flota cercana en SV)
+                        </Typography>
+                      </Box>
                     </Grid>
-                    <Grid size={{ xs: 12, sm: 4 }}>
-                      {!isImmediate ? (
-                        <TextField
-                          fullWidth
-                          size="small"
-                          type="datetime-local"
-                          label="Fecha y Hora Programada"
-                          InputLabelProps={{ shrink: true }}
-                          value={scheduledDateTime}
-                          onChange={(e) => setScheduledDateTime(e.target.value)}
-                        />
-                      ) : (
-                        <TextField
-                          fullWidth
-                          size="small"
-                          type="number"
-                          label="Distancia estimada (km por tramo)"
-                          value={
-                            manualDistanceOverrideKm === ""
-                              ? autoOneWayDistanceKm
-                              : manualDistanceOverrideKm
-                          }
-                          onChange={(e) =>
-                            setManualDistanceOverrideKm(
-                              e.target.value === ""
-                                ? ""
-                                : Number(e.target.value)
-                            )
-                          }
-                        />
-                      )}
+
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        select
+                        fullWidth
+                        size="small"
+                        label="Tiempo Mínimo de Anticipación (Configurable Hito 2)"
+                        value={minAdvanceHours}
+                        onChange={(e) => {
+                          const hrs = Number(e.target.value);
+                          setMinAdvanceHours(hrs);
+                          const d = new Date(Date.now() + hrs * 60 * 60 * 1000);
+                          const pad = (n: number) => String(n).padStart(2, "0");
+                          setScheduledDateTime(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                        }}
+                      >
+                        <MenuItem value={3}>3 horas (Requisito mínimo general SV)</MenuItem>
+                        <MenuItem value={6}>6 horas (Recomendado clientes corporativos)</MenuItem>
+                        <MenuItem value={12}>12 horas (Planificación logística)</MenuItem>
+                        <MenuItem value={24}>24 horas (Planificación interdepartamental)</MenuItem>
+                      </TextField>
+                    </Grid>
+
+                    <Grid size={{ xs: 12, sm: 6 }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        type="datetime-local"
+                        label="Fecha y Hora Programada *"
+                        InputLabelProps={{ shrink: true }}
+                        value={scheduledDateTime}
+                        onChange={(e) => setScheduledDateTime(e.target.value)}
+                        helperText={`Requiere mínimo ${minAdvanceHours} horas de anticipación`}
+                      />
                     </Grid>
                   </Grid>
                 </Stack>
@@ -736,7 +929,7 @@ const NuevaSolicitudB2BPage = () => {
                 subtitle={
                   isEn
                     ? "More than 4 passengers automatically assigns Corporate Minibus (up to 12 passengers). Requests exceeding 12 passengers require contacting Lilo."
-                    : "Más de 4 pasajeros asigna automáticamente Microbús Corporativo (hasta 12 pasajeros). Si excede 12 pasajeros, comunícate con Lilo."
+                    : "Más de 4 pasajeros asigna automáticamente Microbús Corporativo (hasta 12 pasajeros). Para más de 12 pasajeros contáctenos directamente por WhatsApp o llamada."
                 }
               >
                 <Grid container spacing={2.5}>
@@ -794,20 +987,40 @@ const NuevaSolicitudB2BPage = () => {
 
                   {passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY && (
                     <Grid size={{ xs: 12 }}>
-                      <Alert severity="error" sx={{ py: 1 }}>
+                      <Alert severity="error" sx={{ py: 1.5 }}>
                         <Typography variant="subtitle2" fontWeight={700} gutterBottom>
                           {isEn
-                            ? `Requested capacity (${passengersCount} passengers) exceeds maximum vehicle limit (${MAX_VEHICLE_PASSENGER_CAPACITY} passengers).`
-                            : `La capacidad solicitada (${passengersCount} pasajeros) excede el límite máximo de los vehículos (${MAX_VEHICLE_PASSENGER_CAPACITY} pasajeros).`}
+                            ? `Capacity Exceeded (${passengersCount} passengers > max ${MAX_VEHICLE_PASSENGER_CAPACITY})`
+                            : `Capacidad Máxima Excedida (${passengersCount} pasajeros > límite de ${MAX_VEHICLE_PASSENGER_CAPACITY})`}
                         </Typography>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ whiteSpace: "pre-line", fontWeight: 600, mb: 1.5 }}>
                           {isEn
-                            ? `For group transfers exceeding ${MAX_VEHICLE_PASSENGER_CAPACITY} passengers, please contact Lilo directly to coordinate multi-unit corporate logistics:`
-                            : `Para pedidos que exceden la capacidad máxima de las unidades (${MAX_VEHICLE_PASSENGER_CAPACITY} pasajeros), por favor comunícate directamente con Lilo para coordinar tu operación:`}{" "}
-                          <strong>WhatsApp {LILO_DIRECT_CONTACT.whatsapp}</strong> ·{" "}
-                          <strong>Tel. {LILO_DIRECT_CONTACT.phone}</strong> ·{" "}
-                          <strong>{LILO_DIRECT_CONTACT.email}</strong>
+                            ? "For trips with more than 12 passengers, please contact us by WhatsApp or phone and we will gladly assist you immediately.\nWe are at your service."
+                            : "Para viajes de más de 12 pasajeros, contáctenos por WhatsApp o llamada y con gusto le ayudaremos de inmediato.\nEstamos para servirle."}
                         </Typography>
+                        <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            color="success"
+                            href={`https://wa.me/${LILO_DIRECT_CONTACT.whatsapp.replace(/[^\d]/g, "")}?text=${encodeURIComponent(
+                              `Hola Lilo, requiero cotizar un viaje corporativo para ${passengersCount} pasajeros en El Salvador.`
+                            )}`}
+                            target="_blank"
+                          >
+                            WhatsApp {LILO_DIRECT_CONTACT.whatsapp}
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            href={`tel:${LILO_DIRECT_CONTACT.phone}`}
+                          >
+                            Llamar: {LILO_DIRECT_CONTACT.phone}
+                          </Button>
+                          <Typography variant="caption" color="text.secondary">
+                            {LILO_DIRECT_CONTACT.email}
+                          </Typography>
+                        </Box>
                       </Alert>
                     </Grid>
                   )}
@@ -966,20 +1179,31 @@ const NuevaSolicitudB2BPage = () => {
 
                   <Stack direction="row" justifyContent="space-between">
                     <Typography variant="body2" color="textSecondary">
-                      Tarifa Mínima ({backendQuote ? `${backendQuote.minimumDistance} km` : `${tariffBreakdown.baseDistanceKm} km`}):
+                      Tarifa Mínima ({backendQuote?.minimumDistance ?? tariffBreakdown.baseDistanceKm} km):
                     </Typography>
                     <Typography variant="body2" fontWeight={600}>
                       ${tariffBreakdown.minFare.toFixed(2)} USD
                     </Typography>
                   </Stack>
 
+                  {backendQuote?.farePrice != null && (
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography variant="body2" color="textSecondary">
+                        Subtotal Base ({backendQuote.chargedDistance.toFixed(1)} km):
+                      </Typography>
+                      <Typography variant="body2" fontWeight={600}>
+                        ${backendQuote.farePrice.toFixed(2)} USD
+                      </Typography>
+                    </Stack>
+                  )}
+
                   {backendQuote?.taxAmount != null && backendQuote.taxAmount > 0 && (
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="textSecondary">
-                        IVA ({((backendQuote.taxRate ?? 0) * 100).toFixed(0)}%):
+                        IVA ({((backendQuote.taxRate ?? 0.13) * 100).toFixed(0)}%):
                       </Typography>
-                      <Typography variant="body2" fontWeight={600}>
-                        ${backendQuote.taxAmount.toFixed(2)} USD
+                      <Typography variant="body2" fontWeight={600} color="primary.main">
+                        +${backendQuote.taxAmount.toFixed(2)} USD
                       </Typography>
                     </Stack>
                   )}
@@ -1000,26 +1224,26 @@ const NuevaSolicitudB2BPage = () => {
                     >
                       {quoteLoading
                         ? "CALCULANDO COTIZACIÓN OFICIAL..."
-                        : backendQuote
+                        : backendQuote?.taxAmount
                         ? isEn
-                          ? "OFFICIAL SERVICE TOTAL (BACKEND QUOTE)"
-                          : "TOTAL OFICIAL DEL SERVICIO (COTIZACIÓN BACKEND)"
+                          ? "TOTAL ESTIMATED SERVICE (BASE + 13% VAT)"
+                          : "TOTAL ESTIMADO DEL SERVICIO (BASE + IVA 13%)"
                         : isEn
-                        ? "ESTIMATED SERVICE TOTAL (FIXED TARIFF PLAN)"
-                        : "TOTAL ESTIMADO DEL SERVICIO (TARIFA FIJA)"}
+                        ? "TOTAL ESTIMATED SERVICE (BASE TARIFF)"
+                        : "TOTAL ESTIMADO DEL SERVICIO"}
                     </Typography>
                     <Typography
                       variant="h3"
                       fontWeight={800}
-                      color={backendQuote ? "primary.main" : "text.secondary"}
+                      color="primary.main"
                     >
                       ${(backendQuote ? backendQuote.totalAmount : tariffBreakdown.finalFare).toFixed(2)}
                     </Typography>
                     <Typography variant="caption" color="textSecondary" display="block">
                       {backendQuote
                         ? backendQuote.minimumApplied
-                          ? `Tarifa mínima aplicada ($${backendQuote.farePrice.toFixed(2)} USD cubre hasta ${backendQuote.minimumDistance} km · Ruta: ${backendQuote.chargedDistance.toFixed(1)} km)`
-                          : `Tarifa real aplicada (${backendQuote.chargedDistance.toFixed(1)} km × $${backendQuote.appliedFareRate.toFixed(2)}/km)`
+                          ? `Tarifa mínima aplicada ($${backendQuote.farePrice.toFixed(2)} USD cubre hasta ${backendQuote.minimumDistance ?? 20} km · Ruta: ${backendQuote.chargedDistance.toFixed(1)} km)`
+                          : `Tarifa real aplicada (${backendQuote.chargedDistance.toFixed(1)} km × $${backendQuote.appliedFareRate.toFixed(2)}/km + IVA)`
                         : tariffBreakdown.breakdownSummary}
                     </Typography>
                   </Box>

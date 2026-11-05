@@ -42,6 +42,20 @@ import {
 import { useRouter } from "next/navigation";
 import PageContainer from "@/app/(DashboardLayout)/components/container/PageContainer";
 import DashboardCard from "@/app/(DashboardLayout)/components/shared/DashboardCard";
+import { ref, onValue } from "firebase/database";
+import { doc, getDoc } from "firebase/firestore";
+import { rtdb, db } from "@/utils/firebase";
+import {
+  listEligibleDriversCallable,
+  EligibleDriverView,
+  listTripEventsCallable,
+  TripEventRow,
+  listTripIncidentsCallable,
+  TripIncidentRow,
+  resolveTripIncidentCallable,
+  updateOperationsConfigCallable,
+} from "@/utils/functions";
+import GoogleTripTrackingMap from "../_components/GoogleTripTrackingMap";
 import StatusBadge from "../_components/StatusBadge";
 import {
   B2BCompany,
@@ -86,12 +100,44 @@ const B2BSolicitudesPage = () => {
   const [companyFilter, setCompanyFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Drawer de Monitoreo en Tiempo Real (H2.5-FE)
+  // Drawer de Monitoreo en Tiempo Real (H2.5-FE + H3 Despacho/Incidencias)
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(
     null
   );
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>("");
   const [updating, setUpdating] = useState(false);
+
+  // CF-57, CF-61, CF-63, CF-64, CF-49
+  const [eligibleDrivers, setEligibleDrivers] = useState<EligibleDriverView[]>(
+    []
+  );
+  const [tripEvents, setTripEvents] = useState<TripEventRow[]>([]);
+  const [tripIncidents, setTripIncidents] = useState<TripIncidentRow[]>([]);
+  const [resolvingIncidentId, setResolvingIncidentId] = useState<string | null>(
+    null
+  );
+  const [resolutionCode, setResolutionCode] = useState<
+    | "no_action"
+    | "driver_warning"
+    | "company_credit"
+    | "trip_cancelled"
+    | "trip_refunded"
+    | "other"
+  >("no_action");
+  const [resolutionNote, setResolutionNote] = useState("");
+
+  const [showOpsConfig, setShowOpsConfig] = useState(false);
+  const [deadTimeMinutes, setDeadTimeMinutes] = useState(60);
+  const [reminderLeadMinutes, setReminderLeadMinutes] = useState(360);
+  const [assignmentWaitMinutes, setAssignmentWaitMinutes] = useState(15);
+  const [adminPortalUrl, setAdminPortalUrl] = useState(
+    "https://admin.liloapp.com/"
+  );
+  const [companyPortalUrl, setCompanyPortalUrl] = useState(
+    "https://b2b.liloapp.com/"
+  );
+  const [opsReason, setOpsReason] = useState("Ajuste operativo de plataforma");
+  const [savingOps, setSavingOps] = useState(false);
 
   useEffect(() => {
     const unsubReqs = subscribeToB2BRequests(
@@ -104,6 +150,24 @@ const B2BSolicitudesPage = () => {
     );
     const unsubComps = subscribeToB2BCompanies((data) => setCompanies(data));
     const unsubVehs = subscribeToB2BVehicles((data) => setVehicles(data));
+
+    getDoc(doc(db, "platformConfig", "operations"))
+      .then((snap) => {
+        if (snap.exists()) {
+          const d = snap.data();
+          if (typeof d.deadTimeMinutes === "number")
+            setDeadTimeMinutes(d.deadTimeMinutes);
+          if (typeof d.reminderLeadMinutes === "number")
+            setReminderLeadMinutes(d.reminderLeadMinutes);
+          if (typeof d.assignmentWaitMinutes === "number")
+            setAssignmentWaitMinutes(d.assignmentWaitMinutes);
+          if (typeof d.adminPortalUrl === "string")
+            setAdminPortalUrl(d.adminPortalUrl);
+          if (typeof d.companyPortalUrl === "string")
+            setCompanyPortalUrl(d.companyPortalUrl);
+        }
+      })
+      .catch(() => {});
 
     return () => {
       unsubReqs();
@@ -123,7 +187,80 @@ const B2BSolicitudesPage = () => {
     } else {
       setSelectedVehicleId("");
     }
+    if (!activeRequest) {
+      setEligibleDrivers([]);
+      setTripEvents([]);
+      setTripIncidents([]);
+      return;
+    }
+
+    const catId =
+      activeRequest.vehicleCategory === "pickup"
+        ? "pickup"
+        : activeRequest.vehicleCategory === "microbus"
+          ? "microbus"
+          : "suv";
+    const schedId = (activeRequest as any)?.scheduledTripId;
+    const tripId = activeRequest.tripId;
+
+    listEligibleDriversCallable({
+      categoryId: catId,
+      countryId: "sv",
+      ...(schedId && !activeRequest.isImmediate
+        ? { scheduledTripId: schedId }
+        : tripId
+          ? { tripId }
+          : {}),
+    })
+      .then((res) => setEligibleDrivers(res.data?.drivers || []))
+      .catch(() => setEligibleDrivers([]));
+
+    const subjectId = tripId || schedId;
+    if (subjectId) {
+      listTripEventsCallable({ tripId: subjectId, limit: 25 })
+        .then((res) => setTripEvents(res.data?.events || []))
+        .catch(() => setTripEvents([]));
+
+      listTripIncidentsCallable({ tripId: subjectId, limit: 20 })
+        .then((res) => setTripIncidents(res.data?.incidents || []))
+        .catch(() => setTripIncidents([]));
+    }
   }, [activeRequest]);
+
+  const [driverTelemetry, setDriverTelemetry] = useState<{
+    lat?: number;
+    lng?: number;
+    speed?: number;
+    heading?: number;
+    status?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!activeRequest?.assignedDriverId) {
+      setDriverTelemetry(null);
+      return;
+    }
+    // CF-55: telemetría activa en RTDB `conductores_activos/{driverId}`
+    const activeDriverRef = ref(
+      rtdb,
+      `conductores_activos/${activeRequest.assignedDriverId}`
+    );
+    const unsub = onValue(activeDriverRef, (snap) => {
+      if (snap.exists()) {
+        const val = snap.val();
+        setDriverTelemetry({
+          lat: typeof val.lat === "number" ? val.lat : val.latitude,
+          lng: typeof val.lng === "number" ? val.lng : val.longitude,
+          speed: val.speed,
+          heading: val.bearing ?? val.heading,
+          status: val.status,
+        });
+      } else {
+        setDriverTelemetry(null);
+      }
+    });
+    return () => unsub();
+  }, [activeRequest?.assignedDriverId]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter((req) => {
@@ -237,6 +374,66 @@ const B2BSolicitudesPage = () => {
     }
   };
 
+  const handleResolveIncident = async (incId: string) => {
+    setResolvingIncidentId(incId);
+    try {
+      await resolveTripIncidentCallable({
+        incidentId: incId,
+        resolutionCode,
+        ...(resolutionNote.trim() ? { resolutionNote: resolutionNote.trim() } : {}),
+      });
+      setFeedback({
+        type: "success",
+        message: "Incidencia resuelta en el servidor.",
+      });
+      setResolutionNote("");
+      const subjectId =
+        activeRequest?.tripId || (activeRequest as any)?.scheduledTripId;
+      if (subjectId) {
+        const incRes = await listTripIncidentsCallable({
+          tripId: subjectId,
+          limit: 20,
+        });
+        setTripIncidents(incRes.data?.incidents || []);
+      }
+    } catch (err: any) {
+      setFeedback({
+        type: "error",
+        message: err?.message || "No se pudo resolver la incidencia.",
+      });
+    } finally {
+      setResolvingIncidentId(null);
+    }
+  };
+
+  const handleSaveOperationsConfig = async () => {
+    setSavingOps(true);
+    try {
+      await updateOperationsConfigCallable({
+        deadTimeMinutes: Number(deadTimeMinutes),
+        reminderLeadMinutes: Number(reminderLeadMinutes),
+        assignmentWaitMinutes: Number(assignmentWaitMinutes),
+        adminPortalUrl: adminPortalUrl.trim(),
+        companyPortalUrl: companyPortalUrl.trim(),
+        reason: opsReason.trim() || "Actualización operativa de plataforma",
+      });
+      setFeedback({
+        type: "success",
+        message:
+          "Política operativa global (platformConfig/operations) actualizada correctamente (CF-49).",
+      });
+      setShowOpsConfig(false);
+    } catch (err: any) {
+      setFeedback({
+        type: "error",
+        message:
+          err?.message || "No se pudo actualizar platformConfig/operations.",
+      });
+    } finally {
+      setSavingOps(false);
+    }
+  };
+
   const getActiveStepIndex = (status: B2BRequestStatus): number => {
     const idx = LIFECYCLE_STEPS.findIndex((s) => s.status === status);
     if (status === "invoiced") return LIFECYCLE_STEPS.length;
@@ -265,15 +462,104 @@ const B2BSolicitudesPage = () => {
             </Typography>
           </Box>
 
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<IconPlus size={18} />}
-            onClick={() => router.push("/Solicitudes/nueva")}
-          >
-            Nueva Solicitud de Traslado
-          </Button>
+          <Stack direction="row" spacing={1.5}>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={() => setShowOpsConfig((v) => !v)}
+            >
+              {showOpsConfig ? "Ocultar Política Operativa" : "Política Operativa (CF-49)"}
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<IconPlus size={18} />}
+              onClick={() => router.push("/Solicitudes/nueva")}
+            >
+              Nueva Solicitud de Traslado
+            </Button>
+          </Stack>
         </Stack>
+
+        {showOpsConfig && (
+          <Card variant="outlined" sx={{ mb: 3, p: 2.5, bgcolor: "#f8fafc" }}>
+            <Typography variant="subtitle1" fontWeight={700} gutterBottom>
+              Configuración Operativa de Plataforma (`platformConfig/operations` · CF-49)
+            </Typography>
+            <Grid container spacing={2} alignItems="center">
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Tiempo Muerto (deadTimeMinutes)"
+                  value={deadTimeMinutes}
+                  onChange={(e) => setDeadTimeMinutes(Number(e.target.value))}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Anticipación Recordatorio (reminderLeadMinutes)"
+                  value={reminderLeadMinutes}
+                  onChange={(e) =>
+                    setReminderLeadMinutes(Number(e.target.value))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  type="number"
+                  label="Espera Asignación (assignmentWaitMinutes)"
+                  value={assignmentWaitMinutes}
+                  onChange={(e) =>
+                    setAssignmentWaitMinutes(Number(e.target.value))
+                  }
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="URL Portal Admin (https)"
+                  value={adminPortalUrl}
+                  onChange={(e) => setAdminPortalUrl(e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="URL Portal Empresas (https)"
+                  value={companyPortalUrl}
+                  onChange={(e) => setCompanyPortalUrl(e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <Stack direction="row" spacing={1}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Motivo del cambio *"
+                    value={opsReason}
+                    onChange={(e) => setOpsReason(e.target.value)}
+                  />
+                  <Button
+                    variant="contained"
+                    disabled={savingOps}
+                    onClick={handleSaveOperationsConfig}
+                  >
+                    Guardar
+                  </Button>
+                </Stack>
+              </Grid>
+            </Grid>
+          </Card>
+        )}
 
         {feedback && (
           <Alert
@@ -545,6 +831,22 @@ const B2BSolicitudesPage = () => {
 
             <Divider sx={{ mb: 2.5 }} />
 
+            {/* Mapa de Monitoreo en Vivo (Google Maps API + RTDB) */}
+            <Typography variant="subtitle2" fontWeight={700} mb={1}>
+              Monitoreo en Vivo de Ruta y Unidad (Google Maps API)
+            </Typography>
+            <Box mb={2.5}>
+              <GoogleTripTrackingMap
+                origin={activeRequest.origin}
+                destination={activeRequest.destination}
+                stops={activeRequest.stops}
+                driverLocation={driverTelemetry}
+                driverName={activeRequest.assignedDriverName}
+                vehiclePlate={activeRequest.assignedVehiclePlate}
+                height={220}
+              />
+            </Box>
+
             {/* Stepper de Estado en Tiempo Real */}
             <Typography variant="subtitle2" fontWeight={700} mb={1.5}>
               Línea de Tiempo en Vivo (Sincronizada con Firestore)
@@ -755,6 +1057,115 @@ const B2BSolicitudesPage = () => {
                   )}
                 </Typography>
               </Alert>
+
+              {eligibleDrivers.length > 0 && (
+                <Card variant="outlined" sx={{ p: 1.5, bgcolor: "#f8fafc" }}>
+                  <Typography variant="caption" fontWeight={700} color="primary">
+                    CANDIDATOS ELEGIBLES VALIDADOS POR BACKEND (CF-57 · {eligibleDrivers.length})
+                  </Typography>
+                  <Stack spacing={0.5} mt={0.5}>
+                    {eligibleDrivers.map((ed) => (
+                      <Typography key={ed.vehicleId} variant="caption">
+                        • <strong>{ed.name}</strong> ({ed.plate} · {ed.brand}{" "}
+                        {ed.model}) — {ed.online ? "En línea" : "Desconectado"}
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Card>
+              )}
+
+              {/* Incidencias (CF-63 / CF-64) y Bitácora de Eventos (CF-61) */}
+              <Divider sx={{ my: 1 }} />
+              <Typography variant="subtitle2" fontWeight={700}>
+                Incidencias del Traslado ({tripIncidents.length}) y Bitácora (CF-61 / CF-64)
+              </Typography>
+
+              {tripIncidents.length > 0 && (
+                <Stack spacing={1}>
+                  {tripIncidents.map((inc) => (
+                    <Card
+                      key={inc.incidentId}
+                      variant="outlined"
+                      sx={{ p: 1.5, bgcolor: "#fff8f6" }}
+                    >
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
+                      >
+                        <Typography variant="caption" fontWeight={700}>
+                          {inc.type.toUpperCase()} · Severidad: {inc.severity}
+                        </Typography>
+                        <Chip size="small" label={inc.status} color="warning" />
+                      </Stack>
+                      <Typography variant="body2" sx={{ my: 0.5 }}>
+                        {inc.description}
+                      </Typography>
+                      {inc.status === "open" || inc.status === "under_review" ? (
+                        <Stack spacing={1} mt={1}>
+                          <Stack direction="row" spacing={1}>
+                            <TextField
+                              select
+                              size="small"
+                              label="Resolución (CF-64)"
+                              value={resolutionCode}
+                              onChange={(e) =>
+                                setResolutionCode(e.target.value as any)
+                              }
+                              sx={{ minWidth: 160 }}
+                            >
+                              <MenuItem value="no_action">Sin acción (Descartar)</MenuItem>
+                              <MenuItem value="driver_warning">Advertencia conductor</MenuItem>
+                              <MenuItem value="company_credit">Crédito empresa</MenuItem>
+                              <MenuItem value="trip_cancelled">Viaje cancelado</MenuItem>
+                              <MenuItem value="trip_refunded">Viaje reembolsado</MenuItem>
+                              <MenuItem value="other">Otro</MenuItem>
+                            </TextField>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              label="Nota de resolución"
+                              value={resolutionNote}
+                              onChange={(e) => setResolutionNote(e.target.value)}
+                            />
+                            <Button
+                              size="small"
+                              variant="contained"
+                              disabled={resolvingIncidentId === inc.incidentId}
+                              onClick={() =>
+                                handleResolveIncident(inc.incidentId)
+                              }
+                            >
+                              Resolver
+                            </Button>
+                          </Stack>
+                        </Stack>
+                      ) : (
+                        <Typography variant="caption" color="success.main">
+                          Resuelta ({inc.resolutionCode}): {inc.resolutionNote}
+                        </Typography>
+                      )}
+                    </Card>
+                  ))}
+                </Stack>
+              )}
+
+              {tripEvents.length > 0 && (
+                <Card variant="outlined" sx={{ p: 1.5, bgcolor: "#f8fafc" }}>
+                  <Typography variant="caption" fontWeight={700} color="textSecondary">
+                    BITÁCORA DE AUDITORÍA DEL SERVIDOR (CF-61 · {tripEvents.length})
+                  </Typography>
+                  <Stack spacing={0.5} mt={0.5}>
+                    {tripEvents.map((ev) => (
+                      <Typography key={ev.eventId} variant="caption">
+                        • <strong>{ev.eventType}</strong>:{" "}
+                        {ev.fromStatus ? `${ev.fromStatus} → ` : ""}
+                        {ev.toStatus || ""} ({ev.actorType || "system"})
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Card>
+              )}
             </Stack>
           </Box>
         )}

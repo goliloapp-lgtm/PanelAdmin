@@ -53,7 +53,7 @@ export default function ProfilePage() {
     setDeleteLoading(true);
     setDeleteError("");
     try {
-      const res = await requestAccountDeletionCodeCallable({ locale: "es" });
+      const res = await requestAccountDeletionCodeCallable({});
       if (res.data.success) {
         toast.success(res.data.message || "Código enviado a tu correo.");
         setDeleteStep(2);

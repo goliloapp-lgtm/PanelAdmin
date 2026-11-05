@@ -701,7 +701,7 @@ const normalizeDriverDossier = (
 
   const isMembershipActive = membershipRaw?.status === "active";
   const defaultDocStatus: DriverDocumentStatus =
-    isMembershipActive || driverRaw.verified || driverRaw.isUserVerified || driverRaw.verificationStatus === "verified"
+    isMembershipActive || driverRaw.verified || driverRaw.verificationStatus === "verified"
       ? "approved"
       : "inReview";
 
@@ -1108,7 +1108,6 @@ export const createB2BDriverDossierSV = async (data: {
       companyId: data.companyId || null,
       companyName: data.companyName || null,
       verified: false,
-      isUserVerified: false,
       verificationStatus: "pending",
       active: true,
       createdAt: serverTimestamp(),

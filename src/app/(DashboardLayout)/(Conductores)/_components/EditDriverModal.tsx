@@ -99,7 +99,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     if (!userData?.email) return;
     setSendingVerification(true);
     try {
-      const res = await requestEmailVerificationCodeCallable({ email: userData.email, locale: "es" });
+      const res = await requestEmailVerificationCodeCallable({ email: userData.email });
       if (res.data.success) {
         toast.success("Código de verificación enviado al correo del conductor.");
       } else {
@@ -153,8 +153,8 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
 
   const handleUpdate = async (values: Driver) => {
     try {
-      const isApproved = Boolean(values.isUserVerified || values.verificationStatus === "verified");
-      const currentApproved = Boolean(driver.isUserVerified || driver.verificationStatus === "verified");
+      const isApproved = values.verificationStatus === "verified";
+      const currentApproved = driver.verificationStatus === "verified";
 
       // CF-37: Manejo de estado de verificación mediante callable del servidor
       if (isApproved !== currentApproved) {
@@ -229,7 +229,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
           phoneNumber: driver.phoneNumber ?? "",
           vehicleBrand: driver.vehicleBrand ?? "",
           vehicleModel: driver.vehicleModel ?? "",
-          isUserVerified: (driver.verificationStatus === "verified" || driver.isUserVerified) ?? false,
+          isUserVerified: driver.verificationStatus === "verified",
           profileImageUrl: driver.profileImageUrl ?? "",
           licenseImageUrl: driver.licenseImageUrl ?? "",
           criminalRecordImageUrl: driver.criminalRecordImageUrl ?? "",
@@ -414,9 +414,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                     <FormControlLabel
                       control={
                         <Switch
-                          checked={values.isUserVerified}
-                          onChange={(e) => setFieldValue('isUserVerified', e.target.checked)}
-                          name="isUserVerified"
+                          checked={values.verificationStatus === "verified"}
+                          onChange={(e) => setFieldValue('verificationStatus', e.target.checked ? 'verified' : 'pending')}
+                          name="verificationStatus"
                         />
                       }
                       label="Marcar como Verificado"

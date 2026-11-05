@@ -12,8 +12,14 @@ import {
 import { db, auth } from "@/utils/firebase";
 import {
   createTripCallable,
+  createScheduledTripCallable,
+  cancelScheduledTripCallable,
   cancelCompanyReservationCallable,
+  cancelTripCallable,
   markDriverUnavailableCallable,
+  assignDriverCallable,
+  offerScheduledTripCallable,
+  reassignDriverCallable,
 } from "@/utils/functions";
 import {
   B2BRequestStatus,
@@ -388,8 +394,47 @@ export const assignB2BRequestVehicleAndDriver = async (
     driverPhone: string;
     vehicleId: string;
     vehiclePlate: string;
+    tripId?: string;
+    scheduledTripId?: string;
+    reason?: string;
   }
 ): Promise<void> => {
+  // CF-58 / CF-59 / CF-60: Invocar el callable oficial de despacho si la solicitud tiene scheduledTripId o tripId
+  try {
+    const reqDoc = await getB2BRequestById(requestId);
+    const schedId =
+      assignment.scheduledTripId ||
+      (reqDoc as any)?.scheduledTripId ||
+      (!reqDoc?.isImmediate ? reqDoc?.tripId : undefined);
+    const targetTripId = assignment.tripId || reqDoc?.tripId;
+
+    if (schedId && !reqDoc?.isImmediate) {
+      await offerScheduledTripCallable({
+        scheduledTripId: schedId,
+        driverId: assignment.driverId,
+      });
+    } else if (targetTripId) {
+      if (reqDoc?.assignedDriverId && reqDoc.assignedDriverId !== assignment.driverId) {
+        await reassignDriverCallable({
+          tripId: targetTripId,
+          driverId: assignment.driverId,
+          reason: assignment.reason || "Reasignación desde consola de despacho",
+        });
+      } else {
+        await assignDriverCallable({
+          tripId: targetTripId,
+          driverId: assignment.driverId,
+          reason: assignment.reason,
+        });
+      }
+    }
+  } catch (dispatchErr: any) {
+    console.warn(
+      "[requestService] Dispatch callable note (mirroring to b2bRequests):",
+      dispatchErr?.message || dispatchErr
+    );
+  }
+
   FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
     r.id === requestId
       ? {

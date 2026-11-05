@@ -72,7 +72,7 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
     if (!passenger?.email) return;
     setSendingVerification(true);
     try {
-      const res = await requestEmailVerificationCodeCallable({ email: passenger.email, locale: "es" });
+      const res = await requestEmailVerificationCodeCallable({ email: passenger.email });
       if (res.data.success) {
         toast.success("Código de verificación enviado al correo del pasajero.");
       } else {

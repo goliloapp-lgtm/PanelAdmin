@@ -57,7 +57,7 @@ const AuthLogin = ({ title, subtitle, subtext }: loginType) => {
     setResetLoading(true);
     setResetError("");
     try {
-      const res = await requestPasswordResetCodeCallable({ email: resetEmail, locale: "es" });
+      const res = await requestPasswordResetCodeCallable({ email: resetEmail });
       if (res.data.success) {
         toast.success(res.data.message || "Código enviado. Revisa tu correo.");
         setResetStep(2);

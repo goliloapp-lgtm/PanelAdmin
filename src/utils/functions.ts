@@ -25,7 +25,6 @@ export interface DeactivateDriverResponse {
 
 export interface RequestEmailVerificationCodeParams {
   email: string;
-  locale?: "en" | "es";
 }
 
 export interface RequestEmailVerificationCodeResponse {
@@ -53,9 +52,7 @@ export interface GetEmailVerificationStatusResponse {
 }
 
 export interface SendWelcomeEmailParams {
-  email: string;
   displayName?: string;
-  locale?: "en" | "es";
 }
 
 export interface SendWelcomeEmailResponse {
@@ -65,7 +62,6 @@ export interface SendWelcomeEmailResponse {
 
 export interface RequestPasswordResetCodeParams {
   email: string;
-  locale?: "en" | "es";
 }
 
 export interface RequestPasswordResetCodeResponse {
@@ -84,9 +80,7 @@ export interface VerifyPasswordResetCodeAndUpdatePasswordResponse {
   message: string;
 }
 
-export interface RequestAccountDeletionCodeParams {
-  locale?: "en" | "es";
-}
+export interface RequestAccountDeletionCodeParams {}
 
 export interface RequestAccountDeletionCodeResponse {
   success: boolean;
@@ -543,4 +537,605 @@ export const listReferenceChangesCallable = httpsCallable<
   ListReferenceChangesParams,
   ListReferenceChangesResponse
 >(functions, "listReferenceChanges");
+
+// --- CF-42: listPlatformTrips ---
+export interface ListPlatformTripsParams {
+  countryId?: string;
+  companyId?: string;
+  status?: string;
+  limit?: number;
+}
+
+export interface ListPlatformTripsResponse {
+  trips: Array<{
+    tripId: string;
+    countryId: string;
+    companyId?: string;
+    status: string;
+    requestedAt: string;
+    totalAmount: number;
+    categoryId?: string;
+    originAddress?: string;
+    destinationAddress?: string;
+    driverId?: string;
+    [key: string]: any;
+  }>;
+  count?: number;
+}
+
+export const listPlatformTripsCallable = httpsCallable<
+  ListPlatformTripsParams,
+  ListPlatformTripsResponse
+>(functions, "listPlatformTrips");
+
+// --- CF-43: createCompany ---
+export interface CreateCompanyParams {
+  countryId?: string;
+  name: string;
+  legalName?: string;
+  nit: string;
+  nrc?: string;
+  billingPeriod: string;
+  paymentCondition?: string;
+  requiresCCF?: boolean;
+  minimumBookingLeadMinutes: number;
+  costCentre: {
+    name: string;
+    budgetLimit?: number;
+  };
+  fareRates?: Array<{
+    categoryId: string;
+    fareRate: number;
+  }>;
+  admin: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
+export interface CreateCompanyResponse {
+  countryId: string;
+  companyId: string;
+  costCentreId: string;
+  fareRates: number;
+  adminUid: string;
+}
+
+export const createCompanyCallable = httpsCallable<
+  CreateCompanyParams,
+  CreateCompanyResponse
+>(functions, "createCompany");
+
+// --- CF-39: createCompanyUser ---
+export interface CreateCompanyUserParams {
+  email: string;
+  roleId: string;
+  companyId?: string;
+  countryId?: string;
+  operatesInCountries?: string[];
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface CreateCompanyUserResponse {
+  uid: string;
+  email: string;
+  roleId: string;
+  roleScope: "company" | "platform";
+  companyId?: string;
+  countryId?: string;
+}
+
+export const createCompanyUserCallable = httpsCallable<
+  CreateCompanyUserParams,
+  CreateCompanyUserResponse
+>(functions, "createCompanyUser");
+
+// --- CF-44: updateCompanyUser ---
+export interface UpdateCompanyUserParams {
+  userId: string;
+  firstName?: string;
+  lastName?: string;
+  roleId?: string;
+  companyId?: string | null;
+  operatesInCountries?: string[];
+  isActive?: boolean;
+}
+
+export interface UpdateCompanyUserResponse {
+  userId: string;
+  updated: string[];
+}
+
+export const updateCompanyUserCallable = httpsCallable<
+  UpdateCompanyUserParams,
+  UpdateCompanyUserResponse
+>(functions, "updateCompanyUser");
+
+// --- CF-45: listCompanyRates ---
+export interface CompanyRateRow {
+  categoryId: string;
+  categoryName: string;
+  fareRate: number;
+  source: "negotiated" | "country";
+  hasNegotiatedRate: boolean;
+}
+
+export interface ListCompanyRatesResponse {
+  companyId: string;
+  countryId: string;
+  rates: CompanyRateRow[];
+  counts: {
+    negotiated: number;
+    inherited: number;
+    missing: number;
+    total: number;
+  };
+}
+
+export const listCompanyRatesCallable = httpsCallable<
+  { companyId?: string; countryId?: string },
+  ListCompanyRatesResponse
+>(functions, "listCompanyRates");
+
+// --- CF-46: createCostCentre, updateCostCentre, listCostCentres ---
+export interface CostCentreRow {
+  costCentreId: string;
+  name: string;
+  budgetLimit?: number;
+  reserved: number;
+  spent: number;
+  active: boolean;
+  budgetWindowStartAt?: number;
+}
+
+export const createCostCentreCallable = httpsCallable<
+  {
+    companyId?: string;
+    countryId?: string;
+    name: string;
+    budgetLimit?: number;
+  },
+  CostCentreRow
+>(functions, "createCostCentre");
+
+export const updateCostCentreCallable = httpsCallable<
+  {
+    companyId?: string;
+    countryId?: string;
+    costCentreId: string;
+    name?: string;
+    budgetLimit?: number | null;
+    active?: boolean;
+  },
+  CostCentreRow
+>(functions, "updateCostCentre");
+
+export const listCostCentresCallable = httpsCallable<
+  { companyId?: string; countryId?: string },
+  { costCentres: CostCentreRow[]; count: number }
+>(functions, "listCostCentres");
+
+// --- CF-47: createTraveller, updateTraveller, listTravellers ---
+export interface TravellerRow {
+  travellerId: string;
+  name: string;
+  documentNumber?: string;
+  phone?: string;
+  email?: string;
+  active: boolean;
+}
+
+export const createTravellerCallable = httpsCallable<
+  {
+    companyId?: string;
+    countryId?: string;
+    name: string;
+    documentNumber?: string;
+    phone?: string;
+    email?: string;
+  },
+  { travellerId: string }
+>(functions, "createTraveller");
+
+export const updateTravellerCallable = httpsCallable<
+  {
+    companyId?: string;
+    countryId?: string;
+    travellerId: string;
+    name?: string;
+    documentNumber?: string;
+    phone?: string;
+    email?: string;
+    active?: boolean;
+  },
+  { travellerId: string }
+>(functions, "updateTraveller");
+
+export const listTravellersCallable = httpsCallable<
+  { companyId?: string; countryId?: string },
+  { travellers: TravellerRow[]; count: number }
+>(functions, "listTravellers");
+
+// --- CF-48 / CF-54: createScheduledTrip, cancelScheduledTrip ---
+export const createScheduledTripCallable = httpsCallable<
+  {
+    travellerId: string;
+    passengerCount: number;
+    scheduledPickupAt: string;
+    originAddress: string;
+    originLatitude: number;
+    originLongitude: number;
+    destinationAddress: string;
+    destinationLatitude: number;
+    destinationLongitude: number;
+    legs: Array<{ distance: number; durationMinutes: number }>;
+    rideTimeMinutes: number;
+    etaMinutes: number;
+    paymentMethod: string;
+  },
+  {
+    scheduledTripId: string;
+    status: "available";
+    countryId: string;
+    companyId: string;
+    travellerId: string;
+    scheduledPickupAt: string;
+    passengerCount: number;
+    categoryId: string;
+    quote: FareQuote;
+    ceilingReservedAt: string;
+    ceilingReservedAmount: number;
+    costCentreId: string;
+  }
+>(functions, "createScheduledTrip");
+
+export const cancelScheduledTripCallable = httpsCallable<
+  { scheduledTripId: string },
+  {
+    scheduledTripId: string;
+    status: "cancelled";
+    costCentreId: string;
+    releasedAmount: number;
+  }
+>(functions, "cancelScheduledTrip");
+
+// --- CF-49: updateOperationsConfig ---
+export const updateOperationsConfigCallable = httpsCallable<
+  {
+    deadTimeMinutes: number;
+    reminderLeadMinutes: number;
+    assignmentWaitMinutes: number;
+    adminPortalUrl: string;
+    companyPortalUrl: string;
+    reason: string;
+  },
+  {
+    operations: {
+      deadTimeMinutes: number;
+      reminderLeadMinutes: number;
+      assignmentWaitMinutes: number;
+      adminPortalUrl: string;
+      companyPortalUrl: string;
+    };
+    changedFields: string[];
+  }
+>(functions, "updateOperationsConfig");
+
+// --- CF-57: listEligibleDrivers ---
+export interface EligibleDriverView {
+  driverId: string;
+  name: string;
+  phone?: string;
+  vehicleId: string;
+  plate: string;
+  categoryId: string;
+  brand: string;
+  model: string;
+  verificationStatus: string;
+  online: boolean;
+  active: boolean;
+  activeTrip: boolean;
+}
+
+export const listEligibleDriversCallable = httpsCallable<
+  {
+    categoryId: string;
+    countryId?: string;
+    tripId?: string;
+    scheduledTripId?: string;
+    limit?: number;
+  },
+  { drivers: EligibleDriverView[]; count: number }
+>(functions, "listEligibleDrivers");
+
+// --- CF-58: assignDriver ---
+export const assignDriverCallable = httpsCallable<
+  { tripId: string; driverId: string; reason?: string },
+  {
+    tripId: string;
+    driverId: string;
+    status: "offered";
+    assignmentSequence: number;
+    notified: boolean;
+    idempotent?: boolean;
+  }
+>(functions, "assignDriver");
+
+// --- CF-59: offerScheduledTrip ---
+export const offerScheduledTripCallable = httpsCallable<
+  { scheduledTripId: string; driverId: string },
+  {
+    scheduledTripId: string;
+    status: "offered";
+    offeredDriverId: string;
+    notified: boolean;
+  }
+>(functions, "offerScheduledTrip");
+
+// --- CF-60: reassignDriver ---
+export const reassignDriverCallable = httpsCallable<
+  { tripId: string; driverId?: string; newDriverId?: string; reason?: string },
+  {
+    tripId: string;
+    driverId: string;
+    previousDriverId: string;
+    status: "offered";
+    assignmentSequence: number;
+    notified: boolean;
+  }
+>(functions, "reassignDriver");
+
+// --- CF-61: listTripEvents ---
+export interface TripEventRow {
+  eventId: string;
+  tripId?: string;
+  scheduledTripId?: string;
+  countryId: string;
+  companyId?: string;
+  driverId?: string;
+  eventType: string;
+  fromStatus?: string;
+  toStatus?: string;
+  actorType?: string;
+  actorUid?: string;
+  source?: string;
+  reason?: string;
+  at: string;
+}
+
+export const listTripEventsCallable = httpsCallable<
+  {
+    tripId?: string;
+    countryId?: string;
+    companyId?: string;
+    driverId?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  },
+  { events: TripEventRow[]; count: number }
+>(functions, "listTripEvents");
+
+// --- CF-62, CF-63, CF-64: reportTripIncident, listTripIncidents, resolveTripIncident ---
+export type IncidentType =
+  | "accident"
+  | "breakdown"
+  | "route_deviation"
+  | "passenger_no_show"
+  | "driver_no_show"
+  | "safety"
+  | "payment"
+  | "other";
+
+export type IncidentSeverity = "low" | "medium" | "high" | "critical";
+
+export const reportTripIncidentCallable = httpsCallable<
+  {
+    tripId: string;
+    type: IncidentType;
+    severity: IncidentSeverity;
+    description: string;
+    occurredAt?: string;
+    attachments?: string[];
+    requestId?: string;
+  },
+  {
+    incidentId: string;
+    tripId: string;
+    status: "open";
+    type: IncidentType;
+    severity: IncidentSeverity;
+    idempotent?: boolean;
+  }
+>(functions, "reportTripIncident");
+
+export interface TripIncidentRow {
+  incidentId: string;
+  tripId: string;
+  countryId: string;
+  companyId?: string;
+  driverId?: string;
+  type: IncidentType;
+  severity: IncidentSeverity;
+  status: "open" | "under_review" | "resolved" | "dismissed";
+  description: string;
+  attachments?: string[];
+  occurredAt: string;
+  reportedAt: string;
+  tripStatusAtReport?: string;
+  resolvedAt?: string;
+  resolutionCode?: string;
+  resolutionNote?: string;
+}
+
+export const listTripIncidentsCallable = httpsCallable<
+  {
+    tripId?: string;
+    countryId?: string;
+    companyId?: string;
+    status?: "open" | "under_review" | "resolved" | "dismissed";
+    type?: IncidentType;
+    limit?: number;
+  },
+  { incidents: TripIncidentRow[]; count: number }
+>(functions, "listTripIncidents");
+
+export const resolveTripIncidentCallable = httpsCallable<
+  {
+    incidentId: string;
+    resolutionCode:
+      | "no_action"
+      | "driver_warning"
+      | "company_credit"
+      | "trip_cancelled"
+      | "trip_refunded"
+      | "other";
+    resolutionNote?: string;
+    moneyEffect?: {
+      kind: "credit" | "refund" | "none";
+      amount: number;
+      currencyCode: string;
+    };
+  },
+  {
+    incidentId: string;
+    tripId: string;
+    status: "resolved" | "dismissed";
+    resolutionCode: string;
+    moneyEffectApplied: boolean;
+  }
+>(functions, "resolveTripIncident");
+
+// --- CF-68: cancelTrip ---
+export const cancelTripCallable = httpsCallable<
+  { rideId: string; reason?: string },
+  {
+    rideId: string;
+    status: "cancelled";
+    cancelledBy: string;
+    actor: string;
+    cancelledAt: string;
+    idempotent?: boolean;
+  }
+>(functions, "cancelTrip");
+
+// --- listVehicleTypes ---
+export interface VehicleTypeSummary {
+  id: string;
+  name: string;
+  definition: string;
+  hasCargoBed: boolean;
+  b2bSuitable: boolean;
+  selectable: boolean;
+  sortOrder: number;
+  models: Array<{ maxPassengers?: number; [key: string]: unknown }>;
+}
+
+export const listVehicleTypesCallable = httpsCallable<
+  { b2bSuitable?: boolean; minPassengers?: number },
+  { types: VehicleTypeSummary[]; modelsWithoutCapacity: unknown[] }
+>(functions, "listVehicleTypes");
+
+// --- CF-74: updateCompanyCapabilities ---
+export interface UpdateCompanyCapabilitiesParams {
+  companyId: string;
+  allowsImmediateTrips: boolean;
+  allowsScheduledTrips: boolean;
+  minimumBookingLeadMinutes: number;
+  reason?: string;
+}
+
+export interface UpdateCompanyCapabilitiesResponse {
+  companyId: string;
+  capabilities: {
+    allowsImmediateTrips: boolean;
+    allowsScheduledTrips: boolean;
+    minimumBookingLeadMinutes: number;
+  };
+  changedFields: string[];
+}
+
+export const updateCompanyCapabilitiesCallable = httpsCallable<
+  UpdateCompanyCapabilitiesParams,
+  UpdateCompanyCapabilitiesResponse
+>(functions, "updateCompanyCapabilities");
+
+// --- CF-76: listPlatformScheduledTrips ---
+export interface PlatformScheduledTripRow {
+  scheduledTripId: string;
+  status: string;
+  scheduledPickupAt: string;
+  categoryId: string;
+  originAddress: string;
+  destinationAddress: string;
+  totalAmount: number;
+  currencyCode: string;
+  travellerId?: string;
+  acceptedVehicleId?: string;
+  companyId?: string;
+  lastDispatchBlock: {
+    code: string;
+    vehicleId: string;
+    at: string;
+    source: string;
+  } | null;
+}
+
+export interface ListPlatformScheduledTripsParams {
+  countryId?: string;
+  companyId?: string;
+  status?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+export const listPlatformScheduledTripsCallable = httpsCallable<
+  ListPlatformScheduledTripsParams,
+  { scheduledTrips: PlatformScheduledTripRow[]; count: number }
+>(functions, "listPlatformScheduledTrips");
+
+// --- CF-84: listCostCentreRequests y resolveCostCentreRequest ---
+export interface CostCentreRequestRow {
+  requestId: string;
+  countryId: string;
+  companyId: string;
+  requestedBy: string;
+  requestedAt: string;
+  status: "pending" | "approved" | "rejected";
+  proposedName: string;
+  proposedBudgetLimit?: number;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  rejectionReason: string | null;
+  createdCostCentreId: string | null;
+}
+
+export const listCostCentreRequestsCallable = httpsCallable<
+  {
+    countryId?: string;
+    status?: "pending" | "approved" | "rejected";
+    limit?: number;
+  },
+  { requests: CostCentreRequestRow[]; count: number }
+>(functions, "listCostCentreRequests");
+
+export const resolveCostCentreRequestCallable = httpsCallable<
+  {
+    requestId: string;
+    companyId: string;
+    countryId?: string;
+    decision: "approved" | "rejected";
+    rejectionReason?: string;
+  },
+  {
+    requestId: string;
+    status: "approved" | "rejected";
+    createdCostCentreId: string | null;
+  }
+>(functions, "resolveCostCentreRequest");
+
+
 

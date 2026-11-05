@@ -18,7 +18,7 @@ export interface SessionClaims {
   superAdmin: boolean;
   countryIds: string[];
   companyId: string | null;
-  companyRole: 'company_admin' | 'analyst' | null;
+  companyRole: 'company_admin' | 'operator' | 'analyst' | null;
   role?: string | null;
 }
 
@@ -75,7 +75,9 @@ export async function getSessionClaims(forceRefresh = false): Promise<SessionCla
       countryIds: countries,
       companyId: typeof claims.companyId === 'string' ? claims.companyId : null,
       companyRole:
-        claims.companyRole === 'company_admin' || claims.companyRole === 'analyst'
+        claims.companyRole === 'company_admin' ||
+        claims.companyRole === 'operator' ||
+        claims.companyRole === 'analyst'
           ? claims.companyRole
           : null,
       role: typeof claims.role === 'string' ? claims.role : null,
