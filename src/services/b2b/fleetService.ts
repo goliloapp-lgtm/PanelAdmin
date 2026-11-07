@@ -33,38 +33,6 @@ const VEHICLE_CATALOG_COLLECTION = "vehicleCatalog";
 const DOC_REQUIREMENTS_COLLECTION = "documentRequirements";
 const DRIVERS_COLLECTION = "drivers";
 
-export const FALLBACK_VEHICLE_CATALOG: VehicleCatalogBrand[] = [
-  {
-    id: "toyota",
-    name: "Toyota",
-    active: true,
-    models: [
-      { id: "fortuner", name: "Fortuner 2.8 TDI", category: "suv", seats: 7, maxPassengers: 4, active: true },
-      { id: "hilux", name: "Hilux Doble Cabina 4x4", category: "pickup", seats: 5, maxPassengers: 4, active: true },
-      { id: "hiace", name: "Hiace Techo Alto 12 Pax", category: "microbus", seats: 15, maxPassengers: 12, active: true },
-      { id: "corolla", name: "Corolla Cross", category: "suv", seats: 5, maxPassengers: null, active: true },
-    ],
-  },
-  {
-    id: "nissan",
-    name: "Nissan",
-    active: true,
-    models: [
-      { id: "frontier", name: "Frontier NP300 4x4", category: "pickup", seats: 5, maxPassengers: 4, active: true },
-      { id: "urvan", name: "NV350 Urvan", category: "microbus", seats: 15, maxPassengers: 12, active: true },
-    ],
-  },
-  {
-    id: "mitsubishi",
-    name: "Mitsubishi",
-    active: true,
-    models: [
-      { id: "l200", name: "L200 Sportero 4x4", category: "pickup", seats: 5, maxPassengers: 4, active: true },
-      { id: "montero", name: "Montero Sport", category: "suv", seats: 7, maxPassengers: 4, active: true },
-    ],
-  },
-];
-
 /**
  * Lee el catálogo global `vehicleCatalog` y subcolección `models` sin filtrar por `countryId` (CF-01, CF-02, CF-25).
  */
@@ -77,7 +45,7 @@ export const getGlobalVehicleCatalog = async (): Promise<VehicleCatalogBrand[]> 
     );
     const brandsSnap = await getDocs(brandsQuery);
     if (brandsSnap.empty) {
-      return FALLBACK_VEHICLE_CATALOG;
+      return [];
     }
 
     const brands: VehicleCatalogBrand[] = await Promise.all(
@@ -129,9 +97,9 @@ export const getGlobalVehicleCatalog = async (): Promise<VehicleCatalogBrand[]> 
     );
 
     const activeBrands = brands.filter((b) => b.active !== false);
-    return activeBrands.length > 0 ? activeBrands : FALLBACK_VEHICLE_CATALOG;
+    return activeBrands;
   } catch {
-    return FALLBACK_VEHICLE_CATALOG;
+    return [];
   }
 };
 
@@ -242,186 +210,7 @@ export const DEFAULT_SV_DOCUMENT_REQUIREMENTS: Omit<DocumentRequirement, "id">[]
     },
   ];
 
-export let FALLBACK_SV_VEHICLES: B2BVehicle[] = [
-  {
-    id: "vehSvSuv001",
-    countryId: "sv",
-    plate: "P-849201",
-    brand: "Toyota",
-    model: "Fortuner 2.8 TDI",
-    year: 2024,
-    color: "Blanco Perla",
-    category: "suv",
-    maxPassengers: 4,
-    status: "active",
-    driverId: "drvSv001",
-    driverName: "Mauricio Ernesto Portillo",
-    driverPhone: "+503 7845-1920",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    registrationNumber: "TC-SV-904811",
-    registrationExpiresAt: "2027-08-30",
-  },
-  {
-    id: "vehSvPickup002",
-    countryId: "sv",
-    plate: "P-731049",
-    brand: "Toyota",
-    model: "Hilux Doble Cabina 4x4",
-    year: 2024,
-    color: "Gris Metálico",
-    category: "pickup",
-    maxPassengers: 4,
-    status: "active",
-    driverId: "drvSv002",
-    driverName: "Nelson Alexander Hernández",
-    driverPhone: "+503 7612-8834",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    registrationNumber: "TC-SV-772190",
-    registrationExpiresAt: "2027-11-15",
-  },
-  {
-    id: "vehSvMicrobus003",
-    countryId: "sv",
-    plate: "MB-10428",
-    brand: "Toyota",
-    model: "Hiace Techo Alto 12 Pax",
-    year: 2025,
-    color: "Plata",
-    category: "microbus",
-    maxPassengers: 12,
-    status: "active",
-    driverId: "drvSv003",
-    driverName: "Óscar René Valladares",
-    driverPhone: "+503 7901-4452",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    registrationNumber: "TC-SV-551092",
-    registrationExpiresAt: "2027-10-01",
-  },
-];
 
-export let FALLBACK_SV_DOSSIERS: DriverVerificationDossier[] = [
-  {
-    driverId: "drvSv001",
-    driverName: "Mauricio Ernesto Portillo",
-    driverEmail: "mportillo.sv@lilo.app",
-    driverPhone: "+503 7845-1920",
-    dui: "04829103-4",
-    countryId: "sv",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    vehicleId: "vehSvSuv001",
-    vehiclePlate: "P-849201",
-    vehicleCategory: "suv",
-    overallStatus: "partiallyRejected",
-    documents: [
-      {
-        id: "drvSv001DriversLicense",
-        type: "driversLicense",
-        name: "Licencia de Conducir Vigente (SERTRACEN)",
-        appliesTo: "driver",
-        expirationDate: "2028-05-20",
-        status: "approved",
-      },
-      {
-        id: "drvSv001IdentityDocument",
-        type: "identityDocument",
-        name: "Documento Único de Identidad (DUI)",
-        appliesTo: "driver",
-        documentNumber: "04829103-4",
-        expirationDate: "2029-11-10",
-        status: "approved",
-      },
-      {
-        id: "drvSv001VehicleRegistration",
-        type: "vehicleRegistration",
-        name: "Tarjeta de Circulación Vehicular (VMT)",
-        appliesTo: "vehicle",
-        expirationDate: "2027-08-30",
-        status: "rejected",
-        rejectionReason: "illegible",
-        rejectionReasonLabel: "Documento ilegible o borroso",
-        rejectionNote:
-          "Reverso con reflejo de flash en número de chasis. Subir nuevamente solo este documento.",
-      },
-      {
-        id: "drvSv001CriminalRecord",
-        type: "criminalRecord",
-        name: "Solvencia de la Policía Nacional Civil (PNC)",
-        appliesTo: "driver",
-        expirationDate: "2026-12-31",
-        status: "approved",
-      },
-      {
-        id: "drvSv001InsuranceCard",
-        type: "insuranceCard",
-        name: "Póliza de Seguro Corporativo B2B",
-        appliesTo: "vehicle",
-        expirationDate: "2027-09-15",
-        status: "approved",
-      },
-    ],
-  },
-  {
-    driverId: "drvSv002",
-    driverName: "Nelson Alexander Hernández",
-    driverEmail: "nhernandez.sv@lilo.app",
-    driverPhone: "+503 7612-8834",
-    dui: "05192837-1",
-    countryId: "sv",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    vehicleId: "vehSvPickup002",
-    vehiclePlate: "P-731049",
-    vehicleCategory: "pickup",
-    overallStatus: "approved",
-    documents: [
-      {
-        id: "drvSv002DriversLicense",
-        type: "driversLicense",
-        name: "Licencia de Conducir Vigente (SERTRACEN)",
-        appliesTo: "driver",
-        expirationDate: "2028-09-15",
-        status: "approved",
-      },
-      {
-        id: "drvSv002IdentityDocument",
-        type: "identityDocument",
-        name: "Documento Único de Identidad (DUI)",
-        appliesTo: "driver",
-        documentNumber: "05192837-1",
-        expirationDate: "2029-04-20",
-        status: "approved",
-      },
-      {
-        id: "drvSv002VehicleRegistration",
-        type: "vehicleRegistration",
-        name: "Tarjeta de Circulación Vehicular (VMT)",
-        appliesTo: "vehicle",
-        expirationDate: "2027-11-15",
-        status: "approved",
-      },
-      {
-        id: "drvSv002CriminalRecord",
-        type: "criminalRecord",
-        name: "Solvencia de la Policía Nacional Civil (PNC)",
-        appliesTo: "driver",
-        expirationDate: "2027-01-30",
-        status: "approved",
-      },
-      {
-        id: "drvSv002InsuranceCard",
-        type: "insuranceCard",
-        name: "Póliza de Seguro Corporativo B2B",
-        appliesTo: "vehicle",
-        expirationDate: "2027-10-15",
-        status: "approved",
-      },
-    ],
-  },
-];
 
 // ============================================================================
 // VEHÍCULOS B2B (Asociación Conductor + Vehículo + Empresa)
@@ -477,10 +266,11 @@ export const subscribeToB2BVehicles = (
         });
 
         vehicles.sort((a, b) => (a.plate || "").localeCompare(b.plate || ""));
-        callback(vehicles.length > 0 ? vehicles : FALLBACK_SV_VEHICLES);
+        callback(vehicles);
       },
-      () => {
-        callback(FALLBACK_SV_VEHICLES);
+      (error) => {
+        if (onError) onError(error);
+        callback([]);
       }
     );
   });
@@ -502,17 +292,8 @@ export const createB2BVehicle = async (
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
-  try {
-    const docRef = await addDoc(collection(db, VEHICLES_COLLECTION), payload);
-    return docRef.id;
-  } catch {
-    const newId = `vehSv${Date.now()}`;
-    FALLBACK_SV_VEHICLES = [
-      ...FALLBACK_SV_VEHICLES,
-      { id: newId, ...data, countryId: "sv", maxPassengers: data.category === "microbus" ? 12 : 4 },
-    ];
-    return newId;
-  }
+  const docRef = await addDoc(collection(db, VEHICLES_COLLECTION), payload);
+  return docRef.id;
 };
 
 export const updateB2BVehicle = async (
@@ -530,22 +311,12 @@ export const updateB2BVehicle = async (
   if (data.category) {
     payload.maxPassengers = data.category === "microbus" ? 12 : 4;
   }
-  try {
-    await updateDoc(docRef, payload);
-  } catch {
-    FALLBACK_SV_VEHICLES = FALLBACK_SV_VEHICLES.map((v) =>
-      v.id === id ? ({ ...v, ...payload } as B2BVehicle) : v
-    );
-  }
+  await updateDoc(docRef, payload);
 };
 
 export const deleteB2BVehicle = async (id: string): Promise<void> => {
-  try {
-    const docRef = doc(db, VEHICLES_COLLECTION, id);
-    await deleteDoc(docRef);
-  } catch {
-    FALLBACK_SV_VEHICLES = FALLBACK_SV_VEHICLES.filter((v) => v.id !== id);
-  }
+  const docRef = doc(db, VEHICLES_COLLECTION, id);
+  await deleteDoc(docRef);
 };
 
 // ============================================================================
@@ -601,19 +372,6 @@ export const subscribeToDocumentRequirementsSV = (
   };
 };
 
-export const seedDefaultDocumentRequirementsSV = async (): Promise<void> => {
-  for (const item of DEFAULT_SV_DOCUMENT_REQUIREMENTS) {
-    const docId = `sv${item.code.charAt(0).toUpperCase()}${item.code.slice(1)}`;
-    await setDoc(
-      doc(db, DOC_REQUIREMENTS_COLLECTION, docId),
-      {
-        ...item,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-  }
-};
 
 export const saveDocumentRequirementSV = async (
   id: string | null,
@@ -897,14 +655,16 @@ export const subscribeToDriverDossiersSV = (
             })
           );
 
-          callback(dossiers.length > 0 ? dossiers : FALLBACK_SV_DOSSIERS);
+          callback(dossiers);
         } catch (err) {
           console.warn("[subscribeToDriverDossiersSV] Note mapping dossiers:", err);
-          callback(FALLBACK_SV_DOSSIERS);
+          if (onError) onError(err);
+          callback([]);
         }
       },
-      () => {
-        callback(FALLBACK_SV_DOSSIERS);
+      (error) => {
+        if (onError) onError(error);
+        callback([]);
       }
     );
   });
@@ -1160,25 +920,8 @@ export const createB2BDriverDossierSV = async (data: {
     }
 
     return docRef.id;
-  } catch {
-    const newId = `drvSv${Date.now()}`;
-    FALLBACK_SV_DOSSIERS = [
-      ...FALLBACK_SV_DOSSIERS,
-      {
-        driverId: newId,
-        driverName: data.driverName,
-        driverEmail: data.driverEmail,
-        driverPhone: data.driverPhone,
-        dui: data.dui,
-        countryId: "sv",
-        companyId: data.companyId,
-        companyName: data.companyName,
-        vehiclePlate: data.vehiclePlate?.toUpperCase(),
-        vehicleCategory: data.vehicleCategory || "suv",
-        overallStatus: "inReview",
-        documents: initialDocs,
-      },
-    ];
-    return newId;
+  } catch (err) {
+    console.error("[createB2BDriverDossierSV] Error creating driver dossier:", err);
+    throw err;
   }
 };

@@ -774,6 +774,12 @@ export const createScheduledTripCallable = httpsCallable<
     rideTimeMinutes: number;
     etaMinutes: number;
     paymentMethod: string;
+    countryId?: string;
+    companyId?: string;
+    costCenterId?: string;
+    vehicleCategory?: string;
+    passengerName?: string;
+    passengerPhone?: string;
   },
   {
     scheduledTripId: string;

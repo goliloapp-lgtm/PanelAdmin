@@ -55,7 +55,6 @@ import {
   subscribeToDriverDossiersSV,
   subscribeToB2BCompanies,
   reviewDriverDocumentSV,
-  seedDefaultDocumentRequirementsSV,
   createB2BDriverDossierSV,
   REJECTION_REASONS_CATALOG,
 } from "@/services/b2b";
@@ -238,25 +237,6 @@ const B2BDocumentosSVPage = () => {
     }
   };
 
-  const handleSeedCatalog = async () => {
-    setSubmitting(true);
-    try {
-      await seedDefaultDocumentRequirementsSV();
-      setFeedback({
-        type: "success",
-        message:
-          "Catálogo oficial de requisitos documentales de El Salvador sincronizado en Firestore (documentRequirements).",
-      });
-    } catch (err: any) {
-      setFeedback({
-        type: "error",
-        message: err.message || "Error al sincronizar el catálogo.",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <PageContainer
       title="Verificación Documental El Salvador | Lilo B2B"
@@ -280,14 +260,6 @@ const B2BDocumentosSVPage = () => {
           </Box>
 
           <Stack direction="row" spacing={1.5}>
-            <Button
-              variant="outlined"
-              startIcon={<IconRefresh size={18} />}
-              onClick={handleSeedCatalog}
-              disabled={submitting}
-            >
-              Sincronizar Catálogo SV
-            </Button>
             <Button
               variant="contained"
               startIcon={<IconPlus size={18} />}

@@ -27,7 +27,6 @@ import {
   CompanyStatus,
 } from "@/types/b2b";
 import {
-  DEFAULT_BILLING_CADENCES,
   getBillingCadences,
 } from "@/services/b2b/companyService";
 
@@ -91,9 +90,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
   initialData,
 }) => {
   const isEditing = Boolean(initialData);
-  const [cadences, setCadences] = useState<BillingCadenceDocument[]>(
-    DEFAULT_BILLING_CADENCES
-  );
+  const [cadences, setCadences] = useState<BillingCadenceDocument[]>([]);
 
   useEffect(() => {
     if (open) {

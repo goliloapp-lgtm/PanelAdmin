@@ -187,7 +187,7 @@ export function useDashboardStats() {
         });
 
         const last8Days = Object.keys(dailyStats).slice(-8);
-        const salesOverviewCategories = last8Days.length > 0 ? last8Days : ["16/08", "17/08", "18/08", "19/08", "20/08", "21/08", "22/08", "23/08"];
+        const salesOverviewCategories = last8Days;
         
         const salesData = last8Days.map(day => Math.round(dailyStats[day].sales));
         const commissionData = last8Days.map(day => Math.round(dailyStats[day].commission));
@@ -195,11 +195,11 @@ export function useDashboardStats() {
         const salesOverviewSeries = [
           {
             name: "Total Ventas ($)",
-            data: salesData.length > 0 ? salesData : [355, 390, 300, 350, 390, 180, 355, 390],
+            data: salesData,
           },
           {
             name: "Comisión Lilo ($)",
-            data: commissionData.length > 0 ? commissionData : [80, 90, 75, 85, 95, 45, 90, 95],
+            data: commissionData,
           },
         ];
 
@@ -318,13 +318,9 @@ export function useDashboardStats() {
           ],
           salesOverviewCategories,
           salesOverviewSeries,
-          recentTransactions: recentTransactions.length > 0 ? recentTransactions : [
-            { time: "09:30 am", text: "Sin transacciones recientes", color: "primary" }
-          ],
-          driverPerformance: driverPerformance.length > 0 ? driverPerformance : [
-            { id: "1", name: "Sin conductores activos", car: "N/A", performance: "Low", pbg: "error.main", budget: "0" }
-          ],
-          monthlyEarningsChartData: monthlyEarningsChartData.length > 0 ? monthlyEarningsChartData : [25, 66, 20, 40, 12, 58, 20],
+          recentTransactions,
+          driverPerformance,
+          monthlyEarningsChartData,
           loading: false,
           
           tasaCancelacion,

@@ -31,143 +31,6 @@ import {
 
 const REQUESTS_COLLECTION = "b2bRequests";
 
-export let FALLBACK_SV_REQUESTS: B2BServiceRequest[] = [
-  {
-    id: "reqSvDemo001",
-    tripId: "tripSvDemo001",
-    folio: "B2B-SV-2026-4810",
-    countryId: "sv",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    costCenterId: "CCSJeYZJfT3FMy2kEass",
-    costCenterName: "Techo Corporativo General · Planta Apopa",
-    requestedByUid: "portalElAngel",
-    requestedByName: "Gerencia Operaciones El Ángel",
-    travellerId: "travSv001",
-    travellerName: "Ing. Carlos Rivas",
-    passengersCount: 2,
-    passengerNames: ["Ing. Carlos Rivas", "Lic. Sofía Méndez"],
-    passengerPhone: "+503 7890-1122",
-    vehicleCategory: "suv",
-    hasCargo: false,
-    origin: {
-      address: "89 Av. Norte y Calle El Mirador, Colonia Escalón, San Salvador",
-      lat: 13.7086,
-      lng: -89.2408,
-    },
-    stops: [
-      {
-        address: "63 Av. Sur y Alameda Roosevelt, San Salvador",
-        lat: 13.6987,
-        lng: -89.2261,
-      },
-    ],
-    destination: {
-      address: "Km 14 Carretera Troncal del Norte, Apopa, San Salvador",
-      lat: 13.8022,
-      lng: -89.1783,
-    },
-    roundTrip: true,
-    legs: [
-      { distance: 14.7, durationMinutes: 24 },
-      { distance: 14.7, durationMinutes: 24 },
-    ],
-    scheduledAt: new Date().toISOString(),
-    isImmediate: true,
-    estimatedDistanceKm: 29.4,
-    estimatedDurationMinutes: 48,
-    tariffApplied: {
-      category: "suv",
-      ratePerKm: 0.67,
-      minFare: 13.56,
-      baseDistanceKm: 20,
-      calculatedAmount: 27.12,
-    },
-    fareBreakdown: {
-      countryId: "sv",
-      currency: "USD",
-      distanceUnit: "km",
-      chargedDistance: 29.4,
-      farePrice: 27.12,
-      driverEarning: 18.98,
-      commissionRate: 0.3,
-      commissionAmount: 8.14,
-      minimumApplied: true,
-      pricingFormulaVersion: "h1-v1",
-    },
-    finalAmount: 27.12,
-    assignedDriverId: "drvSv001",
-    assignedDriverName: "Mauricio Ernesto Portillo",
-    assignedDriverPhone: "+503 7845-1920",
-    assignedVehicleId: "vehSvSuv001",
-    assignedVehiclePlate: "P-849201",
-    status: "inService",
-  },
-  {
-    id: "reqSvDemo002",
-    tripId: "tripSvDemo002",
-    folio: "B2B-SV-2026-4811",
-    countryId: "sv",
-    companyId: "XmXrFylloVeOIQhrGXG1",
-    companyName: "Industrias El Ángel S.A. de C.V.",
-    costCenterId: "xJmKzymXoW9MBxnSE4bD",
-    costCenterName: "Dirección Comercial y Logística (Sin límite)",
-    requestedByUid: "portalElAngel",
-    requestedByName: "Dirección Comercial El Ángel",
-    travellerId: "travSv002",
-    travellerName: "Lic. Sofía Méndez",
-    passengersCount: 8,
-    passengerNames: ["Comitiva Regional (8 ejecutivos)"],
-    passengerPhone: "+503 7700-3344",
-    vehicleCategory: "microbus",
-    hasCargo: true,
-    cargoDescription: "4 maletas ejecutivas y muestras de exportación",
-    origin: {
-      address: "Bulevar Santa Elena, Antiguo Cuscatlán, La Libertad",
-      lat: 13.6695,
-      lng: -89.2549,
-    },
-    stops: [],
-    destination: {
-      address: "Aeropuerto Internacional de El Salvador (SAL - Comalapa)",
-      lat: 13.4409,
-      lng: -89.0557,
-    },
-    roundTrip: false,
-    legs: [{ distance: 62.5, durationMinutes: 72 }],
-    scheduledAt: new Date().toISOString(),
-    isImmediate: false,
-    estimatedDistanceKm: 62.5,
-    estimatedDurationMinutes: 72,
-    tariffApplied: {
-      category: "microbus",
-      ratePerKm: 0.9,
-      minFare: 45,
-      baseDistanceKm: 50,
-      calculatedAmount: 56.25,
-    },
-    fareBreakdown: {
-      countryId: "sv",
-      currency: "USD",
-      distanceUnit: "km",
-      chargedDistance: 62.5,
-      farePrice: 56.25,
-      driverEarning: 39.38,
-      commissionRate: 0.3,
-      commissionAmount: 16.87,
-      minimumApplied: false,
-      pricingFormulaVersion: "h1-v1",
-    },
-    finalAmount: 56.25,
-    assignedDriverId: "drvSv003",
-    assignedDriverName: "Óscar René Valladares",
-    assignedDriverPhone: "+503 7901-4452",
-    assignedVehicleId: "vehSvMicrobus003",
-    assignedVehiclePlate: "MB-10428",
-    status: "completed",
-  },
-];
-
 const getTimestampMillis = (ts: any): number => {
   if (!ts) return 0;
   if (typeof ts === "number") return ts;
@@ -187,12 +50,6 @@ const sortRequestsDesc = (
       getTimestampMillis(b.createdAt) || getTimestampMillis(b.scheduledAt);
     return timeB - timeA;
   });
-};
-
-export const generateB2BFolio = (): string => {
-  const year = new Date().getFullYear();
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `B2B-SV-${year}-${rand}`;
 };
 
 let currentFirestoreDocs: B2BServiceRequest[] = [];
@@ -232,15 +89,11 @@ export const subscribeToB2BRequests = (
     return sortRequestsDesc(list);
   };
 
-  const emitMerged = () => {
-    const map = new Map<string, B2BServiceRequest>();
-    FALLBACK_SV_REQUESTS.forEach((r) => map.set(r.id, r));
-    currentFirestoreDocs.forEach((r) => map.set(r.id, r));
-    const merged = Array.from(map.values());
-    callback(applyFilters(merged.length > 0 ? merged : FALLBACK_SV_REQUESTS));
+  const emitDocs = () => {
+    callback(applyFilters(currentFirestoreDocs));
   };
 
-  requestListeners.add(emitMerged);
+  requestListeners.add(emitDocs);
 
   auth.authStateReady().then(() => {
     if (cancelled) return;
@@ -257,17 +110,19 @@ export const subscribeToB2BRequests = (
           ...docSnap.data(),
         })) as B2BServiceRequest[];
 
-        emitMerged();
+        emitDocs();
       },
-      () => {
-        emitMerged();
+      (error) => {
+        if (onError) onError(error);
+        currentFirestoreDocs = [];
+        emitDocs();
       }
     );
   });
 
   return () => {
     cancelled = true;
-    requestListeners.delete(emitMerged);
+    requestListeners.delete(emitDocs);
     if (unsubscribeFirestore) unsubscribeFirestore();
   };
 };
@@ -280,14 +135,14 @@ export const getB2BRequestById = async (
     const docRef = doc(db, REQUESTS_COLLECTION, id);
     const snap = await getDoc(docRef);
     if (!snap.exists()) {
-      return FALLBACK_SV_REQUESTS.find((r) => r.id === id) || null;
+      return null;
     }
     return {
       id: snap.id,
       ...snap.data(),
     } as B2BServiceRequest;
   } catch {
-    return FALLBACK_SV_REQUESTS.find((r) => r.id === id) || null;
+    return null;
   }
 };
 
@@ -297,8 +152,6 @@ export const createB2BServiceRequest = async (
     "id" | "folio" | "countryId" | "createdAt" | "updatedAt"
   >
 ): Promise<{ id: string; folio: string; tripId?: string }> => {
-  const folio = generateB2BFolio();
-
   // Build legs array per CF-14 (multi-tramo or single leg)
   const estDuration = Number(data.estimatedDurationMinutes ?? 20) || 20;
   const legs =
@@ -322,33 +175,71 @@ export const createB2BServiceRequest = async (
             },
           ];
 
-
   let tripId = data.tripId;
   let fareBreakdown = data.fareBreakdown;
   let finalAmount = data.finalAmount;
 
-  // Invoke backend callable `createTrip` first so server freezes pricing & validates company ceiling (CF-08, CF-13, CF-14, CF-23)
-  try {
-    const callableRes = await createTripCallable({
-      countryId: "sv",
-      vehicleCategory: data.vehicleCategory,
-      legs,
-      travellerId: data.travellerId,
-      origin: data.origin as unknown as Record<string, unknown>,
-      destination: data.destination as unknown as Record<string, unknown>,
-      paymentMethod: "corporate",
-    });
-    if (callableRes?.data?.tripId) {
-      tripId = callableRes.data.tripId;
-      fareBreakdown = callableRes.data.fareBreakdown;
-      finalAmount = callableRes.data.fareBreakdown.farePrice;
+  if (!data.isImmediate) {
+    try {
+      const schedRes = await createScheduledTripCallable({
+        countryId: "sv",
+        companyId: data.companyId,
+        costCenterId: data.costCenterId,
+        scheduledPickupAt: data.scheduledAt,
+        passengerCount: data.passengersCount,
+        vehicleCategory: data.vehicleCategory,
+        originAddress: data.origin.address,
+        originLatitude: data.origin.lat,
+        originLongitude: data.origin.lng,
+        destinationAddress: data.destination.address,
+        destinationLatitude: data.destination.lat,
+        destinationLongitude: data.destination.lng,
+        legs,
+        rideTimeMinutes: estDuration,
+        etaMinutes: estDuration,
+        passengerName: data.passengerNames?.[0] || data.travellerName || "Pasajero Corporativo",
+        passengerPhone: data.passengerPhone,
+        paymentMethod: "corporate",
+        travellerId: data.travellerId || data.companyId,
+      });
+      if (schedRes?.data?.scheduledTripId) {
+        tripId = schedRes.data.scheduledTripId;
+        if (schedRes.data.quote) {
+          finalAmount = schedRes.data.quote.totalAmount;
+        }
+      }
+    } catch (schedErr: any) {
+      if (
+        schedErr?.code === "functions/resource-exhausted" ||
+        schedErr?.code === "functions/failed-precondition"
+      ) {
+        throw schedErr;
+      }
+      console.warn("[requestService] createScheduledTripCallable note:", schedErr?.message);
     }
-  } catch (err: any) {
-    // Re-throw if backend explicitly rejected due to ceiling exceeded (resource-exhausted)
-    if (err?.code === "functions/resource-exhausted") {
-      throw err;
+  } else {
+    // Invoke backend callable `createTrip` so server freezes pricing & validates ceiling (CF-08, CF-13, CF-14, CF-23)
+    try {
+      const callableRes = await createTripCallable({
+        countryId: "sv",
+        vehicleCategory: data.vehicleCategory,
+        legs,
+        travellerId: data.travellerId,
+        origin: data.origin as unknown as Record<string, unknown>,
+        destination: data.destination as unknown as Record<string, unknown>,
+        paymentMethod: "corporate",
+      });
+      if (callableRes?.data?.tripId) {
+        tripId = callableRes.data.tripId;
+        fareBreakdown = callableRes.data.fareBreakdown;
+        finalAmount = callableRes.data.fareBreakdown.farePrice;
+      }
+    } catch (err: any) {
+      if (err?.code === "functions/resource-exhausted") {
+        throw err;
+      }
+      console.warn("[requestService] createTripCallable fallback:", err?.message);
     }
-    console.warn("[requestService] createTripCallable fallback:", err?.message);
   }
 
   if (!fareBreakdown) {
@@ -372,6 +263,12 @@ export const createB2BServiceRequest = async (
     };
   }
 
+  const folio =
+    (data as any).folio ||
+    (tripId
+      ? `B2B-SV-${new Date().getFullYear()}-${tripId.slice(0, 6).toUpperCase()}`
+      : `B2B-SV-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`);
+
   const payload = {
     ...data,
     legs,
@@ -385,28 +282,8 @@ export const createB2BServiceRequest = async (
     updatedAt: serverTimestamp(),
   };
 
-  try {
-    const docRef = await addDoc(collection(db, REQUESTS_COLLECTION), payload);
-    return { id: docRef.id, folio, tripId };
-  } catch {
-    const newId = `reqSv${Date.now()}`;
-    FALLBACK_SV_REQUESTS = [
-      {
-        id: newId,
-        folio,
-        countryId: "sv",
-        ...data,
-        legs,
-        tripId,
-        fareBreakdown,
-        finalAmount,
-        status: data.status || "requested",
-      },
-      ...FALLBACK_SV_REQUESTS,
-    ];
-    notifyRequestSubscribers();
-    return { id: newId, folio, tripId };
-  }
+  const docRef = await addDoc(collection(db, REQUESTS_COLLECTION), payload);
+  return { id: docRef.id, folio, tripId };
 };
 
 export const assignB2BRequestVehicleAndDriver = async (
@@ -458,7 +335,7 @@ export const assignB2BRequestVehicleAndDriver = async (
     );
   }
 
-  FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId || r.folio === requestId
       ? {
           ...r,
@@ -494,7 +371,7 @@ export const updateB2BRequestStatus = async (
   status: B2BRequestStatus,
   notes?: string
 ): Promise<void> => {
-  FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId || r.folio === requestId
       ? { ...r, status, notes: notes ?? r.notes }
       : r
@@ -640,7 +517,7 @@ export const withdrawB2BDriverAvailability = async (
     }
   }
 
-  FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId
       ? {
           ...r,

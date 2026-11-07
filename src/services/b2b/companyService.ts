@@ -50,183 +50,21 @@ const getCompanyDoc = (companyId: string, countryCode = "sv") =>
 
 const BILLING_CADENCES_COLLECTION = "billingCadences";
 
-/**
- * Catálogo oficial de cadencias de facturación B2B (`billingCadences/{periodId}` - CF-24).
- */
-export const DEFAULT_BILLING_CADENCES: BillingCadenceDocument[] = [
-  {
-    id: "daily",
-    label: "Diario",
-    description:
-      "Cierre de facturación al finalizar cada día calendario (00:00 hora local del país de la empresa).",
-    windowKind: "calendar_day",
-    windowDays: 1,
-    active: true,
-    selectable: true,
-    displayOrder: 1,
-    constraint: null,
-  },
-  {
-    id: "weekly",
-    label: "Semanal",
-    description: "Cierre cada 7 días corridos desde el inicio de la ventana activa.",
-    windowKind: "rolling_days",
-    windowDays: 7,
-    active: true,
-    selectable: true,
-    displayOrder: 2,
-    constraint: null,
-  },
-  {
-    id: "semi-monthly",
-    label: "Quincenal (15 y último día)",
-    description:
-      "Dos cierres por mes calendario: día 15 y último día del mes (28, 29, 30 o 31 según corresponda).",
-    windowKind: "semi_monthly_15_eom",
-    windowDays: null,
-    active: true,
-    selectable: true,
-    displayOrder: 3,
-    constraint: null,
-  },
-  {
-    id: "monthly",
-    label: "Mensual",
-    description:
-      "Cierre el último día de cada mes calendario (día 1 al último día del mes).",
-    windowKind: "calendar_month",
-    windowDays: null,
-    active: true,
-    selectable: true,
-    displayOrder: 4,
-    constraint: null,
-  },
-  {
-    id: "biweekly",
-    label: "Catorcenal (no disponible)",
-    description:
-      "Ciclos de 14 días corridos. Retirado del alta de empresas porque genera 3 cierres en meses con 31 días.",
-    windowKind: "rolling_days",
-    windowDays: 14,
-    active: false,
-    selectable: false,
-    displayOrder: 99,
-    constraint:
-      "Deshabilitado: los ciclos de 14 días producen meses con 3 cierres, incompatible con la conciliación fiscal mensual de El Salvador. Usa Quincenal (15 y último día) o Semanal.",
-  },
-];
-
-export const FALLBACK_SV_COMPANIES: B2BCompany[] = [
-  {
-    id: "XmXrFylloVeOIQhrGXG1",
-    tradeName: "Industrias El Ángel S.A. de C.V.",
-    legalName: "Industrias El Ángel Sociedad Anónima de Capital Variable",
-    nit: "0614-120589-101-4",
-    nrc: "184920-5",
-    contactName: "Lic. Roberto Carlos Mendoza",
-    phone: "+503 2250-8900",
-    whatsapp: "+503 7890-1122",
-    email: "logistica@elangel.com.sv",
-    address: "Km 14 Carretera Troncal del Norte, Apopa, San Salvador",
-    paymentCondition: "credit30",
-    billingPeriod: "monthly",
-    requiresInvoice: true,
-    requiresCCF: true,
-    balance: 75.95,
-    status: "active",
-    countryId: "sv",
-  },
-];
-
-export let FALLBACK_SV_COST_CENTERS: CostCenter[] = [
-  {
-    id: "CCSJeYZJfT3FMy2kEass",
-    code: "CC-APOPA-01",
-    name: "Techo Corporativo General · Planta Apopa",
-    department: "Operaciones y Logística Corporativa",
-    budgetLimit: 2500,
-    monthlyBudget: 2500,
-    spent: 420.5,
-    reserved: 19.7,
-    budgetWindowStart: Date.now() - 5 * 86400000,
-    status: "active",
-  },
-  {
-    id: "xJmKzymXoW9MBxnSE4bD",
-    code: "CC-COM-02",
-    name: "Dirección Comercial y Logística (Sin límite)",
-    department: "Ventas Corporativas",
-    budgetLimit: null,
-    monthlyBudget: null,
-    spent: 315.75,
-    reserved: 0,
-    budgetWindowStart: null,
-    status: "active",
-  },
-];
-
-export let FALLBACK_SV_LIMIT_REQUESTS: LimitRequest[] = [
-  {
-    id: "limReqSv001",
-    costCenterId: "CCSJeYZJfT3FMy2kEass",
-    costCenterName: "Techo Corporativo General · Planta Apopa",
-    previousLimit: 2000,
-    requestedLimit: 2500,
-    reason: "Incremento operativo por visitas de auditoría regional en Planta Apopa.",
-    requestedByUid: "companyAdminElAngel",
-    requestedByName: "Lic. Roberto Carlos Mendoza",
-    status: "applied",
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-];
-
-export let FALLBACK_SV_TRAVELLERS: B2BTraveller[] = [
-  {
-    id: "travSv001",
-    companyId: "compSv001",
-    name: "Ing. Carlos Rivas",
-    email: "crivas@elangel.com.sv",
-    phone: "+503 7890-1122",
-    department: "Operaciones Planta Apopa",
-    employeeCode: "EA-1042",
-    status: "active",
-  },
-  {
-    id: "travSv002",
-    companyId: "compSv001",
-    name: "Lic. Sofía Méndez",
-    email: "smendez@elangel.com.sv",
-    phone: "+503 7700-3344",
-    department: "Dirección Comercial",
-    employeeCode: "EA-2019",
-    status: "active",
-  },
-  {
-    id: "travSv003",
-    companyId: "compSv001",
-    name: "Ing. Javier Ernesto Кury",
-    email: "jkury@elangel.com.sv",
-    phone: "+503 7611-9080",
-    department: "Auditoría Externa / Invitado",
-    employeeCode: "INV-088",
-    status: "active",
-  },
-];
-
 export const getBillingCadences = async (): Promise<BillingCadenceDocument[]> => {
   try {
     await auth.authStateReady();
     const snapshot = await getDocs(collection(db, BILLING_CADENCES_COLLECTION));
     if (snapshot.empty) {
-      return DEFAULT_BILLING_CADENCES;
+      return [];
     }
     const list = snapshot.docs.map((docSnap) => ({
       id: docSnap.id as BillingCadenceDocument["id"],
       ...(docSnap.data() as Omit<BillingCadenceDocument, "id">),
     }));
     return list.sort((a, b) => (a.displayOrder ?? 99) - (b.displayOrder ?? 99));
-  } catch {
-    return DEFAULT_BILLING_CADENCES;
+  } catch (error) {
+    console.warn("[companyService] Error fetching billing cadences:", error);
+    return [];
   }
 };
 
@@ -894,9 +732,9 @@ export const getCompanyTravellers = async (
       id: d.id,
       ...d.data(),
     })) as B2BTraveller[];
-    return list.length > 0 ? list : FALLBACK_SV_TRAVELLERS;
+    return list;
   } catch {
-    return FALLBACK_SV_TRAVELLERS;
+    return [];
   }
 };
 

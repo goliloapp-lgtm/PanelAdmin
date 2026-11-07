@@ -59,7 +59,7 @@ const SalesOverview: React.FC<SalesOverviewProps> = ({ series, categories }) => 
         },
         yaxis: { tickAmount: 4 },
         xaxis: {
-            categories: categories.length > 0 ? categories : ['16/08', '17/08', '18/08', '19/08', '20/08', '21/08', '22/08', '23/08'],
+            categories,
             axisBorder: { show: false },
         },
         tooltip: {
@@ -83,10 +83,7 @@ const SalesOverview: React.FC<SalesOverviewProps> = ({ series, categories }) => 
         }>
             <Chart
                 options={optionscolumnchart}
-                series={series.length > 0 ? series : [
-                    { name: 'Ventas', data: [0] },
-                    { name: 'Comisión', data: [0] }
-                ]}
+                series={series}
                 type="bar"
                 height={370} width={"100%"}
             />

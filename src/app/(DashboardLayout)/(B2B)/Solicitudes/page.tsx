@@ -226,36 +226,33 @@ const B2BSolicitudesPage = () => {
       const comp = companies.find((c) => c.id === st.companyId);
 
       const driverName =
-        veh?.driverName ||
-        (st.status === "driver_assigned" ? "Juan Perez" : undefined);
+        veh?.driverName || (st as any).driverName || undefined;
       const driverPhone =
-        veh?.driverPhone ||
-        (st.status === "driver_assigned" ? "+503 7123-4567" : undefined);
+        veh?.driverPhone || (st as any).driverPhone || undefined;
       const driverId =
-        (st as any).driverId ||
-        veh?.driverId ||
-        (st.status === "driver_assigned" ? "ZFpZfYKfuSf0T0c04wqnBNknkiw2" : undefined);
-      const vehiclePlate = veh?.plate || (st.acceptedVehicleId ? "P123-456" : undefined);
+        (st as any).driverId || veh?.driverId || undefined;
+      const vehiclePlate =
+        veh?.plate || (st as any).vehiclePlate || undefined;
 
       return {
         id: st.scheduledTripId,
         tripId: st.scheduledTripId,
         scheduledTripId: st.scheduledTripId,
-        folio: `B2B-SV-2026-${st.scheduledTripId.slice(0, 4).toUpperCase()}`,
+        folio: (st as any).folio || `B2B-SV-${st.scheduledTripId.slice(0, 6).toUpperCase()}`,
         countryId: "sv",
-        companyId: st.companyId || comp?.id || "XmXrFylloVeOIQhrGXG1",
-        companyName: comp?.tradeName || comp?.legalName || "Industrias El Ángel S.A. de C.V.",
-        costCenterId: "general",
-        costCenterName: "Operaciones Generales",
-        requestedByUid: "portalB2B",
-        requestedByName: "Coordinador Corporativo",
-        travellerId: st.travellerId || "traveller_corp",
-        travellerName: "Viajero Corporativo",
-        passengersCount: st.categoryId === "microbus" ? 8 : 2,
-        passengerNames: ["Viajero Corporativo"],
-        passengerPhone: "+503 7890-1234",
+        companyId: st.companyId || comp?.id || "",
+        companyName: comp?.tradeName || comp?.legalName || (st.companyId ? "Empresa B2B" : "Sin Empresa Asignada"),
+        costCenterId: (st as any).costCentreId || (st as any).costCenterId || "",
+        costCenterName: (st as any).costCentreName || (st as any).costCenterName || "General",
+        requestedByUid: (st as any).requestedByUid || "",
+        requestedByName: (st as any).requestedByName || "Coordinador Corporativo",
+        travellerId: st.travellerId || "",
+        travellerName: (st as any).travellerName || (st.travellerId ? "Viajero Corporativo" : ""),
+        passengersCount: (st as any).passengerCount || (st.categoryId === "microbus" ? 8 : 1),
+        passengerNames: (st as any).passengerName ? [(st as any).passengerName] : [],
+        passengerPhone: (st as any).passengerPhone || "",
         vehicleCategory: (st.categoryId === "pickup" ? "pickup" : st.categoryId === "microbus" ? "microbus" : "suv") as any,
-        hasCargo: false,
+        hasCargo: Boolean((st as any).hasCargo),
         origin: {
           address: st.originAddress,
           lat: 13.7086,
@@ -469,14 +466,20 @@ const B2BSolicitudesPage = () => {
     const eligible = eligibleDrivers.find(
       (e) => e.vehicleId === veh.id || e.plate === veh.plate
     );
-    const resolvedDriverId =
-      eligible?.driverId || veh.driverId || `drv${veh.id}`;
+    const resolvedDriverId = eligible?.driverId || veh.driverId;
+    if (!resolvedDriverId) {
+      setFeedback({
+        type: "error",
+        message: "La unidad seleccionada no cuenta con un conductor elegible asociado.",
+      });
+      return;
+    }
     const resolvedDriverName =
       eligible?.name ||
       veh.driverName ||
-      (eligible?.online ? "Conductor en línea" : `Conductor ${veh.plate}`);
+      "Conductor Asignado";
     const resolvedDriverPhone =
-      eligible?.phone || veh.driverPhone || "+503 7000-0000";
+      eligible?.phone || veh.driverPhone || "";
 
     setUpdating(true);
     try {

@@ -57,7 +57,7 @@ const MonthlyEarnings: React.FC<MonthlyEarningsProps> = ({ gananciasMes, cambioG
     {
       name: 'Comisiones ($)',
       color: secondary,
-      data: chartData.length > 0 ? chartData : [0, 0, 0, 0, 0, 0, 0],
+      data: chartData,
     },
   ];
 
