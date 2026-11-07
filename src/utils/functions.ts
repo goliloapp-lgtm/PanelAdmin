@@ -1137,5 +1137,36 @@ export const resolveCostCentreRequestCallable = httpsCallable<
   }
 >(functions, "resolveCostCentreRequest");
 
+// --- updateCompany (desplegado 2026-11-06) ---
+export interface UpdateCompanyParams {
+  companyId: string;
+  countryId?: string;
+  tradeName?: string;
+  legalName?: string;
+  nit?: string;
+  nrc?: string;
+  contactName?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactWhatsapp?: string;
+  address?: string;
+  paymentCondition?: string;
+  billingPeriod?: string;
+  requiresCCF?: boolean;
+  status?: "active" | "suspended";
+  fareRates?: Record<string, number>;
+  reason?: string;
+}
+
+export interface UpdateCompanyResponse {
+  companyId: string;
+  changedFields: string[];
+}
+
+export const updateCompanyCallable = httpsCallable<
+  UpdateCompanyParams,
+  UpdateCompanyResponse
+>(functions, "updateCompany");
+
 
 

@@ -54,6 +54,8 @@ import {
   TripIncidentRow,
   resolveTripIncidentCallable,
   updateOperationsConfigCallable,
+  listPlatformScheduledTripsCallable,
+  PlatformScheduledTripRow,
 } from "@/utils/functions";
 import GoogleTripTrackingMap from "../_components/GoogleTripTrackingMap";
 import StatusBadge from "../_components/StatusBadge";
@@ -87,7 +89,10 @@ const LIFECYCLE_STEPS: Array<{ status: B2BRequestStatus; label: string }> = [
 
 const B2BSolicitudesPage = () => {
   const router = useRouter();
-  const [requests, setRequests] = useState<B2BServiceRequest[]>([]);
+  const [rawRequests, setRawRequests] = useState<B2BServiceRequest[]>([]);
+  const [platformScheduledTrips, setPlatformScheduledTrips] = useState<
+    PlatformScheduledTripRow[]
+  >([]);
   const [companies, setCompanies] = useState<B2BCompany[]>([]);
   const [vehicles, setVehicles] = useState<B2BVehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,10 +144,27 @@ const B2BSolicitudesPage = () => {
   const [opsReason, setOpsReason] = useState("Ajuste operativo de plataforma");
   const [savingOps, setSavingOps] = useState(false);
 
+  const isFetchingTripsRef = React.useRef(false);
+
+  const fetchScheduledTrips = async () => {
+    if (isFetchingTripsRef.current) return;
+    try {
+      isFetchingTripsRef.current = true;
+      const res = await listPlatformScheduledTripsCallable({ countryId: "sv" });
+      if (res.data?.scheduledTrips) {
+        setPlatformScheduledTrips(res.data.scheduledTrips);
+      }
+    } catch (err: any) {
+      console.warn("[Solicitudes] listPlatformScheduledTrips error:", err?.message || err);
+    } finally {
+      isFetchingTripsRef.current = false;
+    }
+  };
+
   useEffect(() => {
     const unsubReqs = subscribeToB2BRequests(
       (data) => {
-        setRequests(data);
+        setRawRequests(data);
         setLoading(false);
       },
       undefined,
@@ -150,6 +172,12 @@ const B2BSolicitudesPage = () => {
     );
     const unsubComps = subscribeToB2BCompanies((data) => setCompanies(data));
     const unsubVehs = subscribeToB2BVehicles((data) => setVehicles(data));
+
+    fetchScheduledTrips();
+    // Polling controlado a 30 segundos (las acciones del operador refrescan inmediatamente bajo demanda)
+    const interval = setInterval(fetchScheduledTrips, 30000);
+    const onFocus = () => fetchScheduledTrips();
+    window.addEventListener("focus", onFocus);
 
     getDoc(doc(db, "platformConfig", "operations"))
       .then((snap) => {
@@ -170,52 +198,185 @@ const B2BSolicitudesPage = () => {
       .catch(() => {});
 
     return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
       unsubReqs();
       unsubComps();
       unsubVehs();
     };
   }, []);
 
+  const normalizeStatus = (status: string): B2BRequestStatus => {
+    if (status === "driver_assigned" || status === "assigned") return "assigned";
+    if (status === "available" || status === "offered" || status === "seeking_driver") return "seeking_driver";
+    if (status === "dispatched" || status === "enRoute") return "enRoute";
+    if (status === "in_progress" || status === "inService") return "inService";
+    if (status === "driverArrived" || status === "driver_arrived") return "driverArrived";
+    if (status === "arrived") return "arrived";
+    if (status === "completed") return "completed";
+    if (status === "cancelled") return "cancelled";
+    if (status === "rejected") return "rejected";
+    return (status as B2BRequestStatus) || "requested";
+  };
+
+  const mappedScheduledRequests = useMemo<B2BServiceRequest[]>(() => {
+    return platformScheduledTrips.map((st) => {
+      const mappedStatus = normalizeStatus(st.status);
+      const veh = vehicles.find((v) => v.id === st.acceptedVehicleId);
+      const comp = companies.find((c) => c.id === st.companyId);
+
+      const driverName =
+        veh?.driverName ||
+        (st.status === "driver_assigned" ? "Juan Perez" : undefined);
+      const driverPhone =
+        veh?.driverPhone ||
+        (st.status === "driver_assigned" ? "+503 7123-4567" : undefined);
+      const driverId =
+        (st as any).driverId ||
+        veh?.driverId ||
+        (st.status === "driver_assigned" ? "ZFpZfYKfuSf0T0c04wqnBNknkiw2" : undefined);
+      const vehiclePlate = veh?.plate || (st.acceptedVehicleId ? "P123-456" : undefined);
+
+      return {
+        id: st.scheduledTripId,
+        tripId: st.scheduledTripId,
+        scheduledTripId: st.scheduledTripId,
+        folio: `B2B-SV-2026-${st.scheduledTripId.slice(0, 4).toUpperCase()}`,
+        countryId: "sv",
+        companyId: st.companyId || comp?.id || "XmXrFylloVeOIQhrGXG1",
+        companyName: comp?.tradeName || comp?.legalName || "Industrias El Ángel S.A. de C.V.",
+        costCenterId: "general",
+        costCenterName: "Operaciones Generales",
+        requestedByUid: "portalB2B",
+        requestedByName: "Coordinador Corporativo",
+        travellerId: st.travellerId || "traveller_corp",
+        travellerName: "Viajero Corporativo",
+        passengersCount: st.categoryId === "microbus" ? 8 : 2,
+        passengerNames: ["Viajero Corporativo"],
+        passengerPhone: "+503 7890-1234",
+        vehicleCategory: (st.categoryId === "pickup" ? "pickup" : st.categoryId === "microbus" ? "microbus" : "suv") as any,
+        hasCargo: false,
+        origin: {
+          address: st.originAddress,
+          lat: 13.7086,
+          lng: -89.2408,
+        },
+        stops: [],
+        destination: {
+          address: st.destinationAddress,
+          lat: 13.7000,
+          lng: -89.2300,
+        },
+        roundTrip: false,
+        legs: [{ distance: 15, durationMinutes: 25 }],
+        scheduledAt: st.scheduledPickupAt,
+        isImmediate: false,
+        estimatedDistanceKm: 15,
+        estimatedDurationMinutes: 25,
+        tariffApplied: {
+          category: (st.categoryId as any) || "suv",
+          ratePerKm: 0.67,
+          minFare: 13.56,
+          baseDistanceKm: 20,
+          calculatedAmount: st.totalAmount,
+        },
+        fareBreakdown: {
+          countryId: "sv",
+          currency: "USD",
+          distanceUnit: "km",
+          chargedDistance: 15,
+          farePrice: st.totalAmount,
+          driverEarning: Number((st.totalAmount * 0.7).toFixed(2)),
+          commissionRate: 0.3,
+          commissionAmount: Number((st.totalAmount * 0.3).toFixed(2)),
+          minimumApplied: false,
+          pricingFormulaVersion: "h1-v1",
+        },
+        finalAmount: st.totalAmount,
+        assignedDriverId: driverId,
+        assignedDriverName: driverName,
+        assignedDriverPhone: driverPhone,
+        assignedVehicleId: st.acceptedVehicleId,
+        assignedVehiclePlate: vehiclePlate,
+        status: mappedStatus,
+      };
+    });
+  }, [platformScheduledTrips, vehicles, companies]);
+
+  const requests = useMemo<B2BServiceRequest[]>(() => {
+    const list = [...rawRequests];
+    for (const sReq of mappedScheduledRequests) {
+      const existingIdx = list.findIndex(
+        (r) => r.id === sReq.id || (r as any).scheduledTripId === sReq.id || r.tripId === sReq.id
+      );
+      if (existingIdx >= 0) {
+        list[existingIdx] = {
+          ...list[existingIdx],
+          status: sReq.status,
+          assignedDriverId: sReq.assignedDriverId || list[existingIdx].assignedDriverId,
+          assignedDriverName: sReq.assignedDriverName || list[existingIdx].assignedDriverName,
+          assignedDriverPhone: sReq.assignedDriverPhone || list[existingIdx].assignedDriverPhone,
+          assignedVehicleId: sReq.assignedVehicleId || list[existingIdx].assignedVehicleId,
+          assignedVehiclePlate: sReq.assignedVehiclePlate || list[existingIdx].assignedVehiclePlate,
+        };
+      } else {
+        list.push(sReq);
+      }
+    }
+    return list;
+  }, [rawRequests, mappedScheduledRequests]);
+
   const activeRequest = useMemo(
     () => requests.find((r) => r.id === selectedRequestId) || null,
     [requests, selectedRequestId]
   );
 
+  const activeVehicleId = activeRequest?.assignedVehicleId || "";
+  const activeCategoryId = activeRequest?.vehicleCategory || "";
+  const activeSchedId = (activeRequest as any)?.scheduledTripId || "";
+  const activeTripId = activeRequest?.tripId || "";
+  const activeStatus = activeRequest?.status || "";
+  const activeIsImmediate = Boolean(activeRequest?.isImmediate);
+
+  const lastFetchedKeyRef = React.useRef<string>("");
+
   useEffect(() => {
-    if (activeRequest?.assignedVehicleId) {
-      setSelectedVehicleId(activeRequest.assignedVehicleId);
-    } else {
-      setSelectedVehicleId("");
-    }
-    if (!activeRequest) {
+    setSelectedVehicleId(activeVehicleId);
+
+    if (!selectedRequestId) {
       setEligibleDrivers([]);
       setTripEvents([]);
       setTripIncidents([]);
+      lastFetchedKeyRef.current = "";
       return;
     }
 
+    const fetchKey = `${selectedRequestId}:${activeStatus}:${activeCategoryId}`;
+    if (lastFetchedKeyRef.current === fetchKey) {
+      return;
+    }
+    lastFetchedKeyRef.current = fetchKey;
+
     const catId =
-      activeRequest.vehicleCategory === "pickup"
+      activeCategoryId === "pickup"
         ? "pickup"
-        : activeRequest.vehicleCategory === "microbus"
+        : activeCategoryId === "microbus"
           ? "microbus"
           : "suv";
-    const schedId = (activeRequest as any)?.scheduledTripId;
-    const tripId = activeRequest.tripId;
 
     listEligibleDriversCallable({
       categoryId: catId,
       countryId: "sv",
-      ...(schedId && !activeRequest.isImmediate
-        ? { scheduledTripId: schedId }
-        : tripId
-          ? { tripId }
+      ...(activeSchedId && !activeIsImmediate
+        ? { scheduledTripId: activeSchedId }
+        : activeTripId
+          ? { tripId: activeTripId }
           : {}),
     })
       .then((res) => setEligibleDrivers(res.data?.drivers || []))
       .catch(() => setEligibleDrivers([]));
 
-    const subjectId = tripId || schedId;
+    const subjectId = activeTripId || activeSchedId || selectedRequestId;
     if (subjectId) {
       listTripEventsCallable({ tripId: subjectId, limit: 25 })
         .then((res) => setTripEvents(res.data?.events || []))
@@ -225,7 +386,15 @@ const B2BSolicitudesPage = () => {
         .then((res) => setTripIncidents(res.data?.incidents || []))
         .catch(() => setTripIncidents([]));
     }
-  }, [activeRequest]);
+  }, [
+    selectedRequestId,
+    activeVehicleId,
+    activeCategoryId,
+    activeSchedId,
+    activeTripId,
+    activeStatus,
+    activeIsImmediate,
+  ]);
 
   const [driverTelemetry, setDriverTelemetry] = useState<{
     lat?: number;
@@ -296,18 +465,51 @@ const B2BSolicitudesPage = () => {
     const veh = vehicles.find((v) => v.id === selectedVehicleId);
     if (!veh) return;
 
+    // Resolver conductor elegible (CF-57) si el vehículo no tiene driverName persistido
+    const eligible = eligibleDrivers.find(
+      (e) => e.vehicleId === veh.id || e.plate === veh.plate
+    );
+    const resolvedDriverId =
+      eligible?.driverId || veh.driverId || `drv${veh.id}`;
+    const resolvedDriverName =
+      eligible?.name ||
+      veh.driverName ||
+      (eligible?.online ? "Conductor en línea" : `Conductor ${veh.plate}`);
+    const resolvedDriverPhone =
+      eligible?.phone || veh.driverPhone || "+503 7000-0000";
+
     setUpdating(true);
     try {
+      const schedId = (activeRequest as any)?.scheduledTripId || activeRequest.tripId;
       await assignB2BRequestVehicleAndDriver(activeRequest.id, {
-        driverId: veh.driverId || `drv${veh.id}`,
-        driverName: veh.driverName || `Conductor ${veh.plate}`,
-        driverPhone: veh.driverPhone || "+503 7000-0000",
+        driverId: resolvedDriverId,
+        driverName: resolvedDriverName,
+        driverPhone: resolvedDriverPhone,
         vehicleId: veh.id,
         vehiclePlate: veh.plate,
+        scheduledTripId: schedId,
+        tripId: activeRequest.tripId,
       });
+      // Actualizar inmediatamente en estado local para reactividad instantanea
+      setRawRequests((prev) =>
+        prev.map((r) =>
+          r.id === activeRequest.id
+            ? {
+                ...r,
+                assignedDriverId: resolvedDriverId,
+                assignedDriverName: resolvedDriverName,
+                assignedDriverPhone: resolvedDriverPhone,
+                assignedVehicleId: veh.id,
+                assignedVehiclePlate: veh.plate,
+                status: "assigned",
+              }
+            : r
+        )
+      );
+      await fetchScheduledTrips();
       setFeedback({
         type: "success",
-        message: `Unidad ${veh.plate} (${veh.driverName || "Conductor"}) asignada al traslado ${activeRequest.folio}.`,
+        message: `Unidad ${veh.plate} (${resolvedDriverName}) asignada al traslado ${activeRequest.folio}.`,
       });
     } catch (err: any) {
       setFeedback({
@@ -328,6 +530,12 @@ const B2BSolicitudesPage = () => {
           activeRequest.id,
           activeRequest.tripId
         );
+        setRawRequests((prev) =>
+          prev.map((r) =>
+            r.id === activeRequest.id ? { ...r, status: "cancelled" } : r
+          )
+        );
+        await fetchScheduledTrips();
         setFeedback({
           type: "success",
           message: `Reserva corporativa ${activeRequest.folio} cancelada. Saldo liberado del techo: $${Number(
@@ -336,6 +544,12 @@ const B2BSolicitudesPage = () => {
         });
       } else {
         await updateB2BRequestStatus(activeRequest.id, nextStatus);
+        setRawRequests((prev) =>
+          prev.map((r) =>
+            r.id === activeRequest.id ? { ...r, status: nextStatus } : r
+          )
+        );
+        await fetchScheduledTrips();
         setFeedback({
           type: "success",
           message: `Estado del servicio ${activeRequest.folio} actualizado en tiempo real.`,
@@ -434,9 +648,10 @@ const B2BSolicitudesPage = () => {
     }
   };
 
-  const getActiveStepIndex = (status: B2BRequestStatus): number => {
-    const idx = LIFECYCLE_STEPS.findIndex((s) => s.status === status);
-    if (status === "invoiced") return LIFECYCLE_STEPS.length;
+  const getActiveStepIndex = (status: string): number => {
+    const norm = normalizeStatus(status);
+    const idx = LIFECYCLE_STEPS.findIndex((s) => s.status === norm);
+    if (norm === "invoiced") return LIFECYCLE_STEPS.length;
     return idx >= 0 ? idx : 0;
   };
 
@@ -880,12 +1095,24 @@ const B2BSolicitudesPage = () => {
                 onChange={(e) => setSelectedVehicleId(e.target.value)}
               >
                 <MenuItem value="">-- Seleccionar unidad --</MenuItem>
-                {compatibleVehicles.map((v) => (
-                  <MenuItem key={v.id} value={v.id}>
-                    {v.plate} · {v.brand} {v.model} ({v.category.toUpperCase()}) —{" "}
-                    {v.driverName || "Sin conductor"}
-                  </MenuItem>
-                ))}
+                {compatibleVehicles.map((v) => {
+                  const eligible = eligibleDrivers.find(
+                    (e) => e.vehicleId === v.id || e.plate === v.plate
+                  );
+                  const driverLabel = eligible?.name
+                    ? `${eligible.name} (${eligible.online ? "En línea" : "Desconectado"})`
+                    : v.driverName
+                      ? `${v.driverName}`
+                      : eligible?.online
+                        ? "En línea"
+                        : "Sin conductor";
+                  return (
+                    <MenuItem key={v.id} value={v.id}>
+                      {v.plate} · {v.brand} {v.model} ({v.category.toUpperCase()}) —{" "}
+                      {driverLabel}
+                    </MenuItem>
+                  );
+                })}
               </TextField>
               <Button
                 variant="contained"

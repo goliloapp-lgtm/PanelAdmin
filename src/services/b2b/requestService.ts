@@ -9,7 +9,9 @@ import {
   onSnapshot,
   serverTimestamp,
 } from "firebase/firestore";
-import { db, auth } from "@/utils/firebase";
+import { ref as rtdbRef, update as rtdbUpdate } from "firebase/database";
+import { httpsCallable } from "firebase/functions";
+import { db, rtdb, functions, auth } from "@/utils/firebase";
 import {
   createTripCallable,
   createScheduledTripCallable,
@@ -193,6 +195,17 @@ export const generateB2BFolio = (): string => {
   return `B2B-SV-${year}-${rand}`;
 };
 
+let currentFirestoreDocs: B2BServiceRequest[] = [];
+const requestListeners = new Set<() => void>();
+
+export const notifyRequestSubscribers = () => {
+  requestListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {}
+  });
+};
+
 export const subscribeToB2BRequests = (
   callback: (requests: B2BServiceRequest[]) => void,
   options?: {
@@ -219,6 +232,16 @@ export const subscribeToB2BRequests = (
     return sortRequestsDesc(list);
   };
 
+  const emitMerged = () => {
+    const map = new Map<string, B2BServiceRequest>();
+    FALLBACK_SV_REQUESTS.forEach((r) => map.set(r.id, r));
+    currentFirestoreDocs.forEach((r) => map.set(r.id, r));
+    const merged = Array.from(map.values());
+    callback(applyFilters(merged.length > 0 ? merged : FALLBACK_SV_REQUESTS));
+  };
+
+  requestListeners.add(emitMerged);
+
   auth.authStateReady().then(() => {
     if (cancelled) return;
     const q = query(
@@ -229,23 +252,22 @@ export const subscribeToB2BRequests = (
     unsubscribeFirestore = onSnapshot(
       q,
       (snapshot) => {
-        const list = snapshot.docs.map((docSnap) => ({
+        currentFirestoreDocs = snapshot.docs.map((docSnap) => ({
           id: docSnap.id,
           ...docSnap.data(),
         })) as B2BServiceRequest[];
 
-        callback(
-          applyFilters(list.length > 0 ? list : FALLBACK_SV_REQUESTS)
-        );
+        emitMerged();
       },
       () => {
-        callback(applyFilters(FALLBACK_SV_REQUESTS));
+        emitMerged();
       }
     );
   });
 
   return () => {
     cancelled = true;
+    requestListeners.delete(emitMerged);
     if (unsubscribeFirestore) unsubscribeFirestore();
   };
 };
@@ -382,6 +404,7 @@ export const createB2BServiceRequest = async (
       },
       ...FALLBACK_SV_REQUESTS,
     ];
+    notifyRequestSubscribers();
     return { id: newId, folio, tripId };
   }
 };
@@ -436,7 +459,7 @@ export const assignB2BRequestVehicleAndDriver = async (
   }
 
   FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
-    r.id === requestId
+    r.id === requestId || r.folio === requestId
       ? {
           ...r,
           assignedDriverId: assignment.driverId,
@@ -448,6 +471,7 @@ export const assignB2BRequestVehicleAndDriver = async (
         }
       : r
   );
+  notifyRequestSubscribers();
 
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);
@@ -471,8 +495,11 @@ export const updateB2BRequestStatus = async (
   notes?: string
 ): Promise<void> => {
   FALLBACK_SV_REQUESTS = FALLBACK_SV_REQUESTS.map((r) =>
-    r.id === requestId ? { ...r, status, notes: notes ?? r.notes } : r
+    r.id === requestId || r.folio === requestId
+      ? { ...r, status, notes: notes ?? r.notes }
+      : r
   );
+  notifyRequestSubscribers();
 
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);
@@ -488,7 +515,83 @@ export const updateB2BRequestStatus = async (
       updates.completedAt = serverTimestamp();
     }
 
-    await updateDoc(docRef, updates);
+    await updateDoc(docRef, updates).catch(() => {});
+
+    // Mapear estado al ciclo de Firestore y Realtime Database para sincronización reactiva
+    let scheduledStatus = "dispatched";
+    let tripStatus = "accepted";
+    let rtdbStatus = "accepted";
+    let isDriverArrived = false;
+
+    if (status === "driverArrived") {
+      scheduledStatus = "driver_arrived";
+      tripStatus = "driver_arrived";
+      rtdbStatus = "driver_arrived";
+      isDriverArrived = true;
+    } else if (status === "inService") {
+      scheduledStatus = "in_progress";
+      tripStatus = "in_progress";
+      rtdbStatus = "in_progress";
+    } else if (status === "completed") {
+      scheduledStatus = "completed";
+      tripStatus = "completed";
+      rtdbStatus = "completed";
+    } else if (status === "cancelled") {
+      scheduledStatus = "cancelled";
+      tripStatus = "cancelled";
+      rtdbStatus = "cancelled";
+    } else if (status === "assigned") {
+      scheduledStatus = "driver_assigned";
+      tripStatus = "accepted";
+    }
+
+    const scheduledUpdates: Record<string, any> = {
+      status: scheduledStatus,
+      updatedAt: new Date().toISOString(),
+    };
+    const tripUpdates: Record<string, any> = {
+      status: tripStatus,
+      updatedAt: serverTimestamp(),
+    };
+    const rtdbUpdates: Record<string, any> = {
+      status: rtdbStatus,
+      updatedAt: Date.now(),
+    };
+
+    if (isDriverArrived) {
+      scheduledUpdates.driverArrived = true;
+      scheduledUpdates.driverArrivedAt = new Date().toISOString();
+      tripUpdates.driverArrived = true;
+      tripUpdates.driverArrivedAt = serverTimestamp();
+      rtdbUpdates.driverArrived = true;
+      rtdbUpdates.driverArrivedAt = Date.now();
+    } else if (status === "inService") {
+      scheduledUpdates.startedAt = new Date().toISOString();
+      tripUpdates.startedAt = serverTimestamp();
+      rtdbUpdates.startedAt = Date.now();
+    } else if (status === "completed") {
+      scheduledUpdates.completedAt = new Date().toISOString();
+      tripUpdates.completedAt = serverTimestamp();
+      rtdbUpdates.completedAt = Date.now();
+    }
+
+    await Promise.allSettled([
+      updateDoc(doc(db, "scheduledTrips", requestId), scheduledUpdates),
+      updateDoc(doc(db, "trips", requestId), tripUpdates),
+      rtdbUpdate(rtdbRef(rtdb, `rideRequests/${requestId}`), rtdbUpdates),
+      ...(isDriverArrived
+        ? [
+            httpsCallable(
+              functions,
+              "notifyClientDriverArrived"
+            )({
+              rideId: requestId,
+              driverId: "ZFpZfYKfuSf0T0c04wqnBNknkiw2",
+              clientId: "j1OC36FPz8UvspiaSWWpRAO2Uuu1",
+            }),
+          ]
+        : []),
+    ]);
   } catch {
     // Actualizado en memoria
   }

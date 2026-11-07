@@ -99,21 +99,21 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
   const handleOpenEdit = (cc: CostCenter) => {
     setEditingCenter(cc);
     setName(cc.name);
-    setDepartment(cc.department);
+    setDepartment(cc.name);
     const unlimited = cc.budgetLimit === null || cc.budgetLimit === undefined;
     setIsUnlimited(unlimited);
     setBudgetLimitInput(unlimited ? "" : String(cc.budgetLimit));
-    setChangeReason("Ajuste directo de techo corporativo (P13)");
+    setChangeReason("Ajuste directo de techo corporativo (CF-81)");
     setOpenModal(true);
   };
 
   const handleSave = async () => {
-    if (!name.trim() || !department.trim()) {
-      toast.error("Completa el nombre y departamento");
+    if (!name.trim()) {
+      toast.error("Completa el nombre del centro");
       return;
     }
 
-    // CF-23: null = SIN LÍMITE. Jamás usar Number(val) || 0.
+    // CF-23 / CF-81: null = SIN LÍMITE. Jamás usar Number(val) || 0.
     let parsedLimit: number | null = null;
     if (!isUnlimited) {
       const numeric = Number(budgetLimitInput);
@@ -127,53 +127,31 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
     try {
       setSubmitting(true);
       if (editingCenter) {
-        const previousLimit =
-          editingCenter.budgetLimit === undefined
-            ? null
-            : editingCenter.budgetLimit;
-        await updateCostCenter(companyId, editingCenter.id, {
-          name: name.trim(),
-          department: department.trim(),
-          budgetLimit: parsedLimit,
-        });
-        await recordLimitRequestAudit(companyId, {
-          costCenterId: editingCenter.id,
-          costCenterName: name.trim(),
-          previousLimit,
-          requestedLimit: parsedLimit,
-          reason:
-            changeReason.trim() ||
-            "Actualización directa de techo de consumo por administrador",
-          requestedByUid: "adminPanelSv",
-          requestedByName: "Administrador Corporativo",
-          status: "applied",
-        });
-        toast.success("Techo de consumo actualizado en caliente");
+        await updateCostCenter(
+          companyId,
+          editingCenter.id,
+          {
+            name: name.trim(),
+            budgetLimit: parsedLimit,
+          },
+          changeReason.trim() || "Ajuste directo de techo corporativo"
+        );
+        toast.success("Techo de consumo actualizado en caliente (CF-81)");
       } else {
-        const newId = await createCostCenter(companyId, {
+        await createCostCenter(companyId, {
           name: name.trim(),
-          department: department.trim(),
+          department: name.trim(),
           budgetLimit: parsedLimit,
           spent: 0,
           reserved: 0,
           status: "active",
         });
-        await recordLimitRequestAudit(companyId, {
-          costCenterId: newId,
-          costCenterName: name.trim(),
-          previousLimit: null,
-          requestedLimit: parsedLimit,
-          reason: "Alta inicial de techo de consumo corporativo",
-          requestedByUid: "adminPanelSv",
-          requestedByName: "Administrador Corporativo",
-          status: "applied",
-        });
-        toast.success("Centro de costo / techo agregado");
+        toast.success("Centro de costo agregado exitosamente");
       }
       setOpenModal(false);
       fetchCostCentersAndAudit();
-    } catch (err) {
-      toast.error("Error al guardar techo de consumo");
+    } catch (err: any) {
+      toast.error(err?.message || "Error al guardar techo de consumo");
     } finally {
       setSubmitting(false);
     }
@@ -223,7 +201,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
               <TableHead>
                 <TableRow>
                   <TableCell>Nombre / Centro</TableCell>
-                  <TableCell>Departamento</TableCell>
+                  <TableCell>Cadencia</TableCell>
                   <TableCell align="right">Techo del Ciclo</TableCell>
                   <TableCell align="right">Gastado + Reservado</TableCell>
                   <TableCell align="center">Estado</TableCell>
@@ -247,10 +225,14 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
                         ? 100
                         : 0;
 
+                  const isActive =
+                    cc.active !== false &&
+                    cc.status !== "inactive";
+
                   return (
                     <TableRow key={cc.id}>
                       <TableCell sx={{ fontWeight: 500 }}>{cc.name}</TableCell>
-                      <TableCell>{cc.department}</TableCell>
+                      <TableCell>{cc.budgetPeriod || "Mensual"}</TableCell>
                       <TableCell align="right">
                         {isNoLimit ? (
                           <Chip
@@ -282,9 +264,9 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
                       </TableCell>
                       <TableCell align="center">
                         <Chip
-                          label={cc.status === "active" ? "Activo" : "Inactivo"}
+                          label={isActive ? "Activo" : "Inactivo"}
                           size="small"
-                          color={cc.status === "active" ? "success" : "default"}
+                          color={isActive ? "success" : "default"}
                         />
                       </TableCell>
                       <TableCell align="right">
@@ -305,18 +287,18 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
           </TableContainer>
         )}
 
-        {/* Bitácora de Auditoría `limitRequests` (CF-23) */}
+        {/* Historial de Auditoría `costCentreHistory` (D-41 / CF-81) */}
         {limitRequests.length > 0 && (
           <Box sx={{ mt: 3 }}>
             <Divider sx={{ mb: 1.5 }} />
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
               <IconHistory size={18} color="#64748b" />
               <Typography variant="subtitle2" fontWeight={600} color="text.secondary">
-                Bitácora de Cambios de Techo (`limitRequests`)
+                Historial de Cambios de Techo (`costCentreHistory`)
               </Typography>
             </Stack>
             <Stack spacing={1}>
-              {limitRequests.slice(0, 3).map((req) => (
+              {limitRequests.slice(0, 5).map((req) => (
                 <Alert
                   key={req.id}
                   severity="info"
@@ -343,7 +325,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
         )}
       </CardContent>
 
-      {/* Modal Crear / Editar Techo de Consumo (CF-23) */}
+      {/* Modal Crear / Editar Techo de Consumo (CF-81 / D-41) */}
       <Dialog
         open={openModal}
         onClose={() => setOpenModal(false)}
@@ -352,7 +334,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
       >
         <DialogTitle>
           {editingCenter
-            ? "Ajustar Techo de Consumo en Caliente"
+            ? "Ajustar Techo de Consumo en Caliente (CF-81)"
             : "Nuevo Centro de Costo / Techo"}
         </DialogTitle>
         <DialogContent dividers>
@@ -361,18 +343,9 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
               <Typography variant="caption">Nombre del Techo / Centro *</Typography>
               <CustomTextField
                 fullWidth
-                placeholder="Ej. Techo Corporativo General"
+                placeholder="Ej. Operaciones Generales"
                 value={name}
                 onChange={(e: any) => setName(e.target.value)}
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Typography variant="caption">Departamento *</Typography>
-              <CustomTextField
-                fullWidth
-                placeholder="Ej. Operaciones y Logística"
-                value={department}
-                onChange={(e: any) => setDepartment(e.target.value)}
               />
             </Grid>
             <Grid size={{ xs: 12 }}>
@@ -404,7 +377,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
             {editingCenter && (
               <Grid size={{ xs: 12 }}>
                 <Typography variant="caption">
-                  Motivo de Ajuste (Bitácora `limitRequests`)
+                  Motivo de Ajuste (Historial `costCentreHistory`)
                 </Typography>
                 <CustomTextField
                   fullWidth

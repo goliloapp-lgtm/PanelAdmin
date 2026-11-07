@@ -23,6 +23,7 @@ import { httpsCallable } from "firebase/functions";
 import { db, auth, functions, firebaseApp } from "@/utils/firebase";
 import {
   createCompanyCallable,
+  updateCompanyCallable,
   createCompanyUserCallable,
   updateCompanyUserCallable,
   listCompanyRatesCallable,
@@ -269,12 +270,10 @@ export const getB2BCompanies = async (countryCode = "sv"): Promise<B2BCompany[]>
       mapCompanySnap(docSnap.id, docSnap.data())
     );
 
-    return companies.length > 0
-      ? sortCompaniesDesc(companies)
-      : FALLBACK_SV_COMPANIES;
+    return sortCompaniesDesc(companies);
   } catch (error) {
-    console.warn("[companyService] Using fallback companies:", error);
-    return FALLBACK_SV_COMPANIES;
+    console.warn("[companyService] Error fetching companies:", error);
+    return [];
   }
 };
 
@@ -296,18 +295,15 @@ export const subscribeToB2BCompanies = (
           mapCompanySnap(docSnap.id, docSnap.data())
         );
 
-        callback(
-          companies.length > 0
-            ? sortCompaniesDesc(companies)
-            : FALLBACK_SV_COMPANIES
-        );
+        callback(sortCompaniesDesc(companies));
       },
       (error) => {
         console.warn(
-          "[companyService] Firestore read fallback activated:",
-          error?.code
+          "[companyService] Firestore read error on companies:",
+          error?.code || error?.message
         );
-        callback(FALLBACK_SV_COMPANIES);
+        if (onError) onError(error);
+        callback([]);
       }
     );
   });
@@ -327,11 +323,12 @@ export const getB2BCompanyById = async (
     const docRef = getCompanyDoc(id, countryCode);
     const snapshot = await getDoc(docRef);
     if (!snapshot.exists()) {
-      return FALLBACK_SV_COMPANIES.find((c) => c.id === id) || FALLBACK_SV_COMPANIES[0];
+      return null;
     }
     return mapCompanySnap(snapshot.id, snapshot.data());
   } catch (error) {
-    return FALLBACK_SV_COMPANIES.find((c) => c.id === id) || FALLBACK_SV_COMPANIES[0];
+    console.warn("[companyService] Error fetching company by id:", error);
+    return null;
   }
 };
 
@@ -614,7 +611,8 @@ export const createB2BCompany = async (
 
 export const updateB2BCompany = async (
   id: string,
-  data: Partial<Omit<B2BCompany, "id" | "createdAt" | "updatedAt">>
+  data: Partial<Omit<B2BCompany, "id" | "createdAt" | "updatedAt">> & { reason?: string },
+  countryCode = "sv"
 ): Promise<void> => {
   if (data.billingPeriod === "biweekly") {
     throw new Error(
@@ -622,22 +620,29 @@ export const updateB2BCompany = async (
     );
   }
   const { initialPassword: _ignored, ...companyData } = data;
-  const countryCode = (companyData.countryId || "sv").toLowerCase();
+  const effectiveCountry = (companyData.countryId || countryCode || "sv").toLowerCase();
 
-  // Nota: b2bCompanies está bloqueada a escritura directa en firestore.rules (CF-43);
-  // si existe updateCompanyUser para el admin o scheduleReferenceChange para tarifas, se usan por su canal.
-  try {
-    const docRef = getCompanyDoc(id, countryCode);
-    await updateDoc(docRef, {
-      ...companyData,
-      updatedAt: serverTimestamp(),
-    });
-  } catch (err) {
-    console.warn(
-      "[companyService] Direct update on b2bCompanies blocked by rules (use callables):",
-      err
-    );
-  }
+  // CF-86 / D-A: Invocación oficial de updateCompany (cero escrituras directas a Firestore)
+  await updateCompanyCallable({
+    companyId: id,
+    countryId: effectiveCountry,
+    ...(companyData.tradeName ? { tradeName: companyData.tradeName.trim() } : {}),
+    ...(companyData.legalName ? { legalName: companyData.legalName.trim() } : {}),
+    ...(companyData.nit ? { nit: companyData.nit.trim() } : {}),
+    ...(companyData.nrc ? { nrc: companyData.nrc.trim() } : {}),
+    ...(companyData.contactName ? { contactName: companyData.contactName.trim() } : {}),
+    ...(companyData.email ? { contactEmail: companyData.email.trim().toLowerCase() } : {}),
+    ...(companyData.phone ? { contactPhone: companyData.phone.trim() } : {}),
+    ...(companyData.whatsapp ? { contactWhatsapp: companyData.whatsapp.trim() } : {}),
+    ...(companyData.address ? { address: companyData.address.trim() } : {}),
+    ...(companyData.paymentCondition ? { paymentCondition: companyData.paymentCondition } : {}),
+    ...(companyData.billingPeriod ? { billingPeriod: companyData.billingPeriod } : {}),
+    ...(typeof companyData.requiresCCF === "boolean" ? { requiresCCF: companyData.requiresCCF } : {}),
+    ...(companyData.status === "active" || companyData.status === "suspended"
+      ? { status: companyData.status }
+      : {}),
+    ...(data.reason?.trim() ? { reason: data.reason.trim() } : {}),
+  });
 };
 
 export const updateB2BCompanyStatus = async (
@@ -645,7 +650,7 @@ export const updateB2BCompanyStatus = async (
   status: B2BCompany["status"],
   countryCode = "sv"
 ): Promise<void> => {
-  return updateB2BCompany(id, { status, countryId: countryCode });
+  return updateB2BCompany(id, { status, countryId: countryCode }, countryCode);
 };
 
 /**
@@ -713,9 +718,10 @@ export const getCostCenters = async (
         status: raw.active === false ? "inactive" : raw.status || "active",
       };
     }) as CostCenter[];
-    return list.length > 0 ? list : FALLBACK_SV_COST_CENTERS;
+    return list;
   } catch (error) {
-    return FALLBACK_SV_COST_CENTERS;
+    console.warn("[companyService] Error fetching cost centers:", error);
+    return [];
   }
 };
 
@@ -740,7 +746,7 @@ export const createCostCenter = async (
 export const updateCostCenter = async (
   companyId: string,
   centerId: string,
-  data: Partial<Omit<CostCenter, "id" | "createdAt">>,
+  data: Partial<Omit<CostCenter, "id" | "createdAt">> & { reason?: string },
   countryCode = "sv"
 ): Promise<void> => {
   const payload: {
@@ -750,6 +756,7 @@ export const updateCostCenter = async (
     name?: string;
     budgetLimit?: number | null;
     active?: boolean;
+    reason?: string;
   } = {
     companyId,
     countryId: countryCode.toLowerCase(),
@@ -767,8 +774,14 @@ export const updateCostCenter = async (
   if (data.status !== undefined) {
     payload.active = data.status === "active";
   }
+  if (typeof data.active === "boolean") {
+    payload.active = data.active;
+  }
+  if (data.reason?.trim()) {
+    payload.reason = data.reason.trim();
+  }
 
-  // CF-46: updateCostCentreCallable
+  // CF-46 / CF-81: updateCostCentreCallable
   await updateCostCentreCallable(payload);
 };
 
@@ -792,22 +805,41 @@ export const getLimitRequests = async (
 ): Promise<LimitRequest[]> => {
   try {
     await auth.authStateReady();
-    const subCol = collection(
+    // D-41 / CF-81: La historia oficial de cambios vive en costCentreHistory
+    const historyCol = collection(
       db,
       "countries",
       countryCode.toLowerCase(),
       "b2bCompanies",
       companyId,
-      "limitRequests"
+      "costCentreHistory"
     );
-    const snapshot = await getDocs(subCol);
-    const list = snapshot.docs.map((d) => ({
-      id: d.id,
-      ...d.data(),
-    })) as LimitRequest[];
-    return list.length > 0 ? list : FALLBACK_SV_LIMIT_REQUESTS;
-  } catch {
-    return FALLBACK_SV_LIMIT_REQUESTS;
+    const snapshot = await getDocs(historyCol);
+    if (!snapshot.empty) {
+      return snapshot.docs.map((d) => {
+        const raw = d.data();
+        return {
+          id: d.id,
+          costCenterId: raw.costCentreId || "",
+          costCenterName: raw.name || raw.costCentreName || "Centro de Costo",
+          previousLimit:
+            raw.previousValue?.budgetLimit ??
+            (typeof raw.previousValue === "number" ? raw.previousValue : null),
+          requestedLimit:
+            raw.newValue?.budgetLimit ??
+            (typeof raw.newValue === "number" ? raw.newValue : null),
+          reason: raw.reason || `Actualización de ${raw.field || "techo"}`,
+          requestedByUid: raw.changedBy || "admin",
+          requestedByName: raw.changedBy || "Administrador",
+          status: "applied",
+          createdAt: raw.changedAt || raw.createdAt || new Date().toISOString(),
+        };
+      });
+    }
+    return [];
+  } catch (err) {
+    console.warn("[companyService] Error reading costCentreHistory:", err);
+    return [];
   }
 };
 
@@ -816,30 +848,9 @@ export const recordLimitRequestAudit = async (
   entry: Omit<LimitRequest, "id" | "createdAt">,
   countryCode = "sv"
 ): Promise<string> => {
-  const fallbackEntry: LimitRequest = {
-    ...entry,
-    id: `limReq${Date.now()}`,
-    createdAt: new Date().toISOString(),
-  };
-  FALLBACK_SV_LIMIT_REQUESTS = [fallbackEntry, ...FALLBACK_SV_LIMIT_REQUESTS];
-
-  try {
-    const subCol = collection(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "limitRequests"
-    );
-    const docRef = await addDoc(subCol, {
-      ...entry,
-      createdAt: serverTimestamp(),
-    });
-    return docRef.id;
-  } catch {
-    return fallbackEntry.id;
-  }
+  // D-41: updateCostCentre ya escribe automáticamente a costCentreHistory en la misma transacción.
+  // Este helper se mantiene por compatibilidad sin escribir colecciones deprecadas.
+  return `audit_${Date.now()}`;
 };
 
 export const getCompanyTravellers = async (

@@ -27,7 +27,6 @@ import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/
 import {
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
-  approveCountryMembershipCallable,
   setDriverVerificationCallable,
 } from "@/utils/functions";
 import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -156,17 +155,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
       const isApproved = values.verificationStatus === "verified";
       const currentApproved = driver.verificationStatus === "verified";
 
-      // CF-37: Manejo de estado de verificación mediante callable del servidor
+      // CF-37 / G18: Manejo de estado de verificación mediante callable del servidor sin llamadas redundantes a membresía
       if (isApproved !== currentApproved) {
         if (isApproved) {
-          try {
-            await approveCountryMembershipCallable({
-              userId: driver.userId || driver.uid,
-              code: driver.countryId || "sv",
-            });
-          } catch (approvalErr: any) {
-            console.warn("approveCountryMembershipCallable error:", approvalErr);
-          }
           await setDriverVerificationCallable({
             driverId: driver.uid,
             verified: true,
@@ -229,7 +220,7 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
           phoneNumber: driver.phoneNumber ?? "",
           vehicleBrand: driver.vehicleBrand ?? "",
           vehicleModel: driver.vehicleModel ?? "",
-          isUserVerified: driver.verificationStatus === "verified",
+          verificationStatus: driver.verificationStatus ?? "pending",
           profileImageUrl: driver.profileImageUrl ?? "",
           licenseImageUrl: driver.licenseImageUrl ?? "",
           criminalRecordImageUrl: driver.criminalRecordImageUrl ?? "",

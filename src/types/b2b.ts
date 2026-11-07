@@ -63,6 +63,9 @@ export interface B2BCompany {
   paymentCondition: PaymentCondition;
   billingPeriod?: BillingPeriodId;
   negotiatedFareRate?: number;
+  allowsImmediateTrips?: boolean;
+  allowsScheduledTrips?: boolean;
+  minimumBookingLeadMinutes?: number;
   validFrom?: Timestamp | any;
   creditLimit?: number | null;
   requiresInvoice: boolean;
@@ -87,12 +90,14 @@ export interface CostCenter {
   id: string;
   code?: string;
   name: string;
-  department: string;
+  department?: string;
   budgetLimit: number | null;
   monthlyBudget?: number | null;
+  budgetPeriod?: string;
   spent: number;
   reserved?: number;
   budgetWindowStart?: number | null;
+  active?: boolean;
   status?: "active" | "inactive";
   createdAt?: Timestamp | any;
   updatedAt?: Timestamp | any;

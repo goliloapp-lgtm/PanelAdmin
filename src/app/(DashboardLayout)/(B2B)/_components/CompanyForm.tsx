@@ -13,18 +13,8 @@ import {
   Checkbox,
   Typography,
   Alert,
-  IconButton,
-  InputAdornment,
   Stack,
-  Tooltip,
 } from "@mui/material";
-import {
-  IconEye,
-  IconEyeOff,
-  IconRefresh,
-  IconCopy,
-  IconKey,
-} from "@tabler/icons-react";
 import toast from "react-hot-toast";
 import { useFormik } from "formik";
 import * as yup from "yup";
@@ -39,13 +29,12 @@ import {
 import {
   DEFAULT_BILLING_CADENCES,
   getBillingCadences,
-  generateTemporaryPassword,
 } from "@/services/b2b/companyService";
 
 interface CompanyFormProps {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt">) => Promise<void>;
+  onSubmit: (data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt"> & { minimumBookingLeadMinutes?: number }) => Promise<void>;
   initialData?: B2BCompany | null;
 }
 
@@ -73,7 +62,7 @@ const validationSchema = yup.object({
   address: yup.string().required("La dirección es obligatoria"),
   paymentCondition: yup
     .string()
-    .oneOf(["cash", "transfer", "card", "credit15", "credit30"])
+    .oneOf(["cash", "transfer", "card", "credit_15", "credit_30", "credit15", "credit30"])
     .required("Selecciona la condición de pago"),
   billingPeriod: yup
     .string()
@@ -87,13 +76,11 @@ const validationSchema = yup.object({
     .typeError("Ingresa una tarifa válida")
     .positive("La tarifa negociada debe ser mayor a $0.00")
     .required("La tarifa negociada por km es obligatoria"),
-  initialPassword: yup
-    .string()
-    .test(
-      "min-if-present",
-      "La contraseña temporal debe tener al menos 6 caracteres",
-      (val) => !val || val.trim().length === 0 || val.trim().length >= 6
-    ),
+  minimumBookingLeadMinutes: yup
+    .number()
+    .typeError("Ingresa los minutos de anticipación")
+    .min(0, "Debe ser mayor o igual a 0")
+    .required("Anticipación mínima obligatoria"),
   status: yup.string().oneOf(["active", "suspended", "inactive"]),
 });
 
@@ -107,19 +94,12 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
   const [cadences, setCadences] = useState<BillingCadenceDocument[]>(
     DEFAULT_BILLING_CADENCES
   );
-  const [showPassword, setShowPassword] = useState(true);
-  const [defaultTempPassword, setDefaultTempPassword] = useState(() =>
-    generateTemporaryPassword()
-  );
 
   useEffect(() => {
     if (open) {
       getBillingCadences().then((list) => setCadences(list));
-      if (!initialData) {
-        setDefaultTempPassword(generateTemporaryPassword());
-      }
     }
-  }, [open, initialData]);
+  }, [open]);
 
   const normalizePaymentCondition = (raw?: string): PaymentCondition => {
     if (raw === "credit_15" || raw === "credit15") return "credit15";
@@ -146,8 +126,8 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
           : initialData?.billingPeriod || "monthly"
       ) as BillingPeriodId,
       negotiatedFareRate: initialData?.negotiatedFareRate ?? 0.67,
+      minimumBookingLeadMinutes: initialData?.minimumBookingLeadMinutes ?? 180,
       creditLimit: initialData?.creditLimit ?? null,
-      initialPassword: initialData ? "" : defaultTempPassword,
       requiresInvoice: initialData?.requiresInvoice ?? true,
       requiresCCF: initialData?.requiresCCF ?? false,
       balance: initialData?.balance || 0,
@@ -323,8 +303,8 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
                 <MenuItem value="cash">Efectivo contra entrega</MenuItem>
                 <MenuItem value="transfer">Transferencia Bancaria</MenuItem>
                 <MenuItem value="card">Tarjeta de Crédito / Débito</MenuItem>
-                <MenuItem value="credit15">Crédito 15 Días</MenuItem>
-                <MenuItem value="credit30">Crédito 30 Días</MenuItem>
+                <MenuItem value="credit_15">Crédito 15 Días</MenuItem>
+                <MenuItem value="credit_30">Crédito 30 Días</MenuItem>
               </CustomTextField>
             </Grid>
             <Grid size={{ xs: 12, sm: 4 }}>
@@ -456,109 +436,46 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
               />
             </Grid>
 
-            {/* Credenciales de Acceso — Portal B2B */}
-            <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <IconKey size={18} color="#5D87FF" />
-                <Typography variant="subtitle2" color="primary" fontWeight={600}>
-                  Credenciales de Acceso — Portal Corporativo B2B
-                </Typography>
-              </Stack>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 8 }}>
-              <Typography variant="caption">
-                {isEditing
-                  ? "Nueva Contraseña Temporal (Opcional — solo si deseas restablecer el acceso)"
-                  : "Contraseña Temporal Inicial (Primer Login) *"}
-              </Typography>
+            {/* Parámetros Operativos B2B (G13, G14) */}
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Typography variant="caption">Anticipación Mínima de Reserva (minutos) *</Typography>
               <CustomTextField
                 fullWidth
-                type={showPassword ? "text" : "password"}
-                name="initialPassword"
-                placeholder={
-                  isEditing
-                    ? "Dejar vacío para mantener contraseña actual"
-                    : "Ej. LiloSV-4829!"
-                }
-                value={formik.values.initialPassword}
+                type="number"
+                name="minimumBookingLeadMinutes"
+                value={formik.values.minimumBookingLeadMinutes}
                 onChange={formik.handleChange}
                 error={
-                  formik.touched.initialPassword &&
-                  Boolean(formik.errors.initialPassword)
+                  formik.touched.minimumBookingLeadMinutes &&
+                  Boolean(formik.errors.minimumBookingLeadMinutes)
                 }
                 helperText={
-                  formik.touched.initialPassword && formik.errors.initialPassword
+                  (formik.touched.minimumBookingLeadMinutes &&
+                    formik.errors.minimumBookingLeadMinutes) ||
+                  "Mínimo 180 min (3 horas) requerido por backend para reservas B2B"
                 }
-                InputProps={{
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <Tooltip
-                        title={
-                          showPassword
-                            ? "Ocultar contraseña"
-                            : "Mostrar contraseña"
-                        }
-                      >
-                        <IconButton
-                          size="small"
-                          onClick={() => setShowPassword((prev) => !prev)}
-                        >
-                          {showPassword ? (
-                            <IconEyeOff size={18} />
-                          ) : (
-                            <IconEye size={18} />
-                          )}
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Copiar contraseña temporal">
-                        <IconButton
-                          size="small"
-                          onClick={() => {
-                            if (formik.values.initialPassword) {
-                              navigator.clipboard.writeText(
-                                formik.values.initialPassword
-                              );
-                              toast.success("Contraseña temporal copiada");
-                            }
-                          }}
-                        >
-                          <IconCopy size={18} />
-                        </IconButton>
-                      </Tooltip>
-                    </InputAdornment>
-                  ),
-                }}
               />
             </Grid>
-            <Grid
-              size={{ xs: 12, sm: 4 }}
-              sx={{ display: "flex", alignItems: "flex-end" }}
-            >
-              <Button
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Typography variant="caption">País de Operación Fiscal (G14)</Typography>
+              <CustomTextField
                 fullWidth
-                variant="outlined"
-                color="primary"
-                startIcon={<IconRefresh size={16} />}
-                onClick={() => {
-                  const newPass = generateTemporaryPassword();
-                  formik.setFieldValue("initialPassword", newPass);
-                  setShowPassword(true);
-                  toast.success("Nueva contraseña temporal generada");
-                }}
-                sx={{ height: 42 }}
-              >
-                Generar Clave
-              </Button>
+                disabled
+                value="El Salvador (sv)"
+                helperText="Resuelto para jurisdicción El Salvador"
+              />
             </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Alert severity="warning" sx={{ py: 0.5 }}>
-                <Typography variant="caption">
-                  <strong>Flujo de Seguridad B2B:</strong> La empresa ingresará al
-                  Portal Corporativo con el correo{" "}
-                  <strong>{formik.values.email || "corporativo@empresa.com"}</strong>{" "}
-                  y esta contraseña temporal. En su primer inicio de sesión, el
-                  portal le exigirá obligatoriamente configurar su contraseña
-                  definitiva.
+
+            {/* Activación Segura de Acceso — Portal B2B (D-22 / G12 / G22) */}
+            <Grid size={{ xs: 12 }} sx={{ mt: 1 }}>
+              <Alert severity="info" sx={{ py: 1 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  Activación de Cuenta sin Contraseña Temporal (D-22 / CF-43)
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  El usuario administrador de la empresa (<strong>{formik.values.email || "correo corporativo"}</strong>)
+                  recibirá automáticamente un correo oficial con su enlace de activación seguro de un solo uso para
+                  establecer su contraseña definitiva en <code>/establecer-clave</code>.
                 </Typography>
               </Alert>
             </Grid>

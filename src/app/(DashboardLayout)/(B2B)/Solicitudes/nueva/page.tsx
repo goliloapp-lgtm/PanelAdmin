@@ -561,62 +561,6 @@ const NuevaSolicitudB2BPage = () => {
                       <Typography variant="subtitle2" fontWeight={700}>
                         Punto de Origen *
                       </Typography>
-                      <Button
-                        size="small"
-                        variant="text"
-                        startIcon={<IconBuildingSkyscraper size={15} color="#5D87FF" />}
-                        endIcon={<IconChevronDown size={14} />}
-                        onClick={(e) => setOriginMenuAnchor(e.currentTarget)}
-                        sx={{
-                          textTransform: "none",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          py: 0.25,
-                          px: 1,
-                          color: "primary.main",
-                          bgcolor: "#ECF2FF",
-                          borderRadius: 1.5,
-                          "&:hover": { bgcolor: "#DFE5EF" },
-                        }}
-                      >
-                        Hubs frecuentes SV
-                      </Button>
-                      <Menu
-                        anchorEl={originMenuAnchor}
-                        open={Boolean(originMenuAnchor)}
-                        onClose={() => setOriginMenuAnchor(null)}
-                        PaperProps={{ sx: { maxHeight: 340, width: 360, borderRadius: 2 } }}
-                      >
-                        <MenuItem disabled sx={{ opacity: 1, fontWeight: 700, fontSize: "0.75rem", color: "text.secondary" }}>
-                          PUNTOS CORPORATIVOS FRECUENTES (EL SALVADOR)
-                        </MenuItem>
-                        <Divider />
-                        {EL_SALVADOR_LOCATIONS.map((loc, i) => (
-                          <MenuItem
-                            key={i}
-                            dense
-                            selected={originCoord.address === loc.address}
-                            onClick={() => {
-                              setOriginCoord({
-                                address: loc.address,
-                                lat: loc.lat,
-                                lng: loc.lng,
-                              });
-                              setOriginMenuAnchor(null);
-                            }}
-                          >
-                            <ListItemIcon sx={{ minWidth: 26 }}>
-                              <IconMapPin size={16} color="#5D87FF" />
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={loc.label}
-                              secondary={loc.address}
-                              primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
-                              secondaryTypographyProps={{ fontSize: "0.7rem", noWrap: true }}
-                            />
-                          </MenuItem>
-                        ))}
-                      </Menu>
                     </Stack>
                     <GoogleAddressAutocomplete
                       placeholder="Buscar dirección o punto de interés (ej. WTC, Sheraton, Hilton, Calle El Mirador...)"
@@ -744,62 +688,6 @@ const NuevaSolicitudB2BPage = () => {
                       <Typography variant="subtitle2" fontWeight={700}>
                         Punto de Destino *
                       </Typography>
-                      <Button
-                        size="small"
-                        variant="text"
-                        startIcon={<IconBuildingSkyscraper size={15} color="#5D87FF" />}
-                        endIcon={<IconChevronDown size={14} />}
-                        onClick={(e) => setDestMenuAnchor(e.currentTarget)}
-                        sx={{
-                          textTransform: "none",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          py: 0.25,
-                          px: 1,
-                          color: "primary.main",
-                          bgcolor: "#ECF2FF",
-                          borderRadius: 1.5,
-                          "&:hover": { bgcolor: "#DFE5EF" },
-                        }}
-                      >
-                        Hubs frecuentes SV
-                      </Button>
-                      <Menu
-                        anchorEl={destMenuAnchor}
-                        open={Boolean(destMenuAnchor)}
-                        onClose={() => setDestMenuAnchor(null)}
-                        PaperProps={{ sx: { maxHeight: 340, width: 360, borderRadius: 2 } }}
-                      >
-                        <MenuItem disabled sx={{ opacity: 1, fontWeight: 700, fontSize: "0.75rem", color: "text.secondary" }}>
-                          PUNTOS CORPORATIVOS FRECUENTES (EL SALVADOR)
-                        </MenuItem>
-                        <Divider />
-                        {EL_SALVADOR_LOCATIONS.map((loc, i) => (
-                          <MenuItem
-                            key={i}
-                            dense
-                            selected={destinationCoord.address === loc.address}
-                            onClick={() => {
-                              setDestinationCoord({
-                                address: loc.address,
-                                lat: loc.lat,
-                                lng: loc.lng,
-                              });
-                              setDestMenuAnchor(null);
-                            }}
-                          >
-                            <ListItemIcon sx={{ minWidth: 26 }}>
-                              <IconMapPin size={16} color="#5D87FF" />
-                            </ListItemIcon>
-                            <ListItemText
-                              primary={loc.label}
-                              secondary={loc.address}
-                              primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
-                              secondaryTypographyProps={{ fontSize: "0.7rem", noWrap: true }}
-                            />
-                          </MenuItem>
-                        ))}
-                      </Menu>
                     </Stack>
                     <GoogleAddressAutocomplete
                       placeholder="Buscar destino en El Salvador (ej. Aeropuerto Comalapa, Zona Franca, Hotel...)"
