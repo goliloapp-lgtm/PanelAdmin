@@ -776,13 +776,14 @@ export const createScheduledTripCallable = httpsCallable<
     paymentMethod: string;
     countryId?: string;
     companyId?: string;
-    costCenterId?: string;
+    costCentreId?: string;
     vehicleCategory?: string;
     passengerName?: string;
     passengerPhone?: string;
   },
   {
     scheduledTripId: string;
+    folio: string;
     status: "available";
     countryId: string;
     companyId: string;
@@ -820,6 +821,7 @@ export const createScheduledTripForCompanyCallable = httpsCallable<
   },
   {
     scheduledTripId: string;
+    folio: string;
     status: "available";
     countryId: string;
     companyId: string;

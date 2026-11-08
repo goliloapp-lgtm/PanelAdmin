@@ -73,6 +73,7 @@ import {
   updateB2BRequestStatus,
   cancelB2BCompanyReservation,
   withdrawB2BDriverAvailability,
+  releaseB2BRequestToPool,
 } from "@/services/b2b";
 
 const LIFECYCLE_STEPS: Array<{ status: B2BRequestStatus; label: string }> = [
@@ -570,21 +571,42 @@ const B2BSolicitudesPage = () => {
 
   const handleDriverUnavailable = async () => {
     if (!activeRequest) return;
+    const reasonPrompt = window.prompt(
+      "Ingresa el motivo de devolución de la reserva al pool (requerido para auditoría CF-86):",
+      "Conductor reporta incidente o teléfono apagado; se devuelve al pool"
+    );
+    if (!reasonPrompt || !reasonPrompt.trim()) {
+      setFeedback({
+        type: "error",
+        message: "El motivo de devolución al pool es obligatorio (CF-86).",
+      });
+      return;
+    }
+
     setUpdating(true);
     try {
-      await withdrawB2BDriverAvailability(
-        activeRequest.id,
-        activeRequest.tripId,
-        activeRequest.assignedDriverId
-      );
+      const schedId =
+        (activeRequest as any)?.scheduledTripId ||
+        (!activeRequest.isImmediate ? activeRequest.tripId : undefined);
+
+      if (schedId) {
+        await releaseB2BRequestToPool(activeRequest.id, schedId, reasonPrompt.trim());
+      } else {
+        await withdrawB2BDriverAvailability(
+          activeRequest.id,
+          activeRequest.tripId,
+          activeRequest.assignedDriverId
+        );
+      }
       setFeedback({
         type: "success",
-        message: `Conductor desvinculado (${activeRequest.folio} → seeking_driver). El techo de consumo de la empresa permanece intacto.`,
+        message: `Reserva devuelta al pool de despacho exitosamente (${activeRequest.folio} → seeking_driver). El techo de la empresa permanece intacto.`,
       });
+      await fetchScheduledTrips();
     } catch (err: any) {
       setFeedback({
         type: "error",
-        message: err.message || "Error al reportar baja de conductor.",
+        message: err.message || "Error al devolver la reserva al pool.",
       });
     } finally {
       setUpdating(false);

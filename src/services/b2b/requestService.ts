@@ -170,8 +170,12 @@ export const createB2BServiceRequest = async (
   data: Omit<
     B2BServiceRequest,
     "id" | "folio" | "countryId" | "createdAt" | "updatedAt"
-  >
+  > & { reason?: string }
 ): Promise<{ id: string; folio: string; tripId?: string }> => {
+  if (!data.travellerId?.trim()) {
+    throw new Error("Debes seleccionar un viajero corporativo registrado para la empresa.");
+  }
+
   // Build legs array per CF-14 (multi-tramo or single leg)
   const estDuration = Number(data.estimatedDurationMinutes ?? 20) || 20;
   const legs =
@@ -196,172 +200,81 @@ export const createB2BServiceRequest = async (
           ];
 
   let tripId = data.tripId;
-  let fareBreakdown = data.fareBreakdown;
-  let finalAmount = data.finalAmount;
+  let folio = (data as any).folio || "";
 
   if (!data.isImmediate) {
-    try {
-      const scheduledPickupAtIso =
-        data.scheduledAt ||
-        ((data as any).scheduledPickupAt?.toDate?.()
-          ? (data as any).scheduledPickupAt.toDate().toISOString()
-          : typeof (data as any).scheduledPickupAt === "string"
-            ? (data as any).scheduledPickupAt
-            : new Date(Date.now() + 3 * 3600 * 1000).toISOString());
+    const scheduledPickupAtIso =
+      data.scheduledAt ||
+      ((data as any).scheduledPickupAt?.toDate?.()
+        ? (data as any).scheduledPickupAt.toDate().toISOString()
+        : typeof (data as any).scheduledPickupAt === "string"
+          ? (data as any).scheduledPickupAt
+          : new Date(Date.now() + 3 * 3600 * 1000).toISOString());
 
-      let schedRes: any = null;
-      try {
-        // CF-86: Preferir createScheduledTripForCompanyCallable para SuperAdmin / Operador de plataforma
-        schedRes = await createScheduledTripForCompanyCallable({
-          countryId: "sv",
-          companyId: data.companyId,
-          costCentreId: data.costCenterId || undefined,
-          scheduledPickupAt: scheduledPickupAtIso,
-          passengerCount: data.passengersCount,
-          originAddress: data.origin.address,
-          originLatitude: data.origin.lat,
-          originLongitude: data.origin.lng,
-          destinationAddress: data.destination.address,
-          destinationLatitude: data.destination.lat,
-          destinationLongitude: data.destination.lng,
-          legs,
-          rideTimeMinutes: estDuration,
-          etaMinutes: estDuration,
-          paymentMethod: "corporate",
-          travellerId: data.travellerId || data.companyId,
-          reason:
-            data.notes?.trim() ||
-            "Solicitud de traslado corporativo creada desde consola de operaciones SuperAdmin Lilo",
-        });
-      } catch (companyCallErr: any) {
-        console.warn(
-          "[requestService] createScheduledTripForCompany note (falling back to standard):",
-          companyCallErr?.message
-        );
-        schedRes = await createScheduledTripCallable({
-          countryId: "sv",
-          companyId: data.companyId,
-          costCenterId: data.costCenterId || undefined,
-          scheduledPickupAt: scheduledPickupAtIso,
-          passengerCount: data.passengersCount,
-          originAddress: data.origin.address,
-          originLatitude: data.origin.lat,
-          originLongitude: data.origin.lng,
-          destinationAddress: data.destination.address,
-          destinationLatitude: data.destination.lat,
-          destinationLongitude: data.destination.lng,
-          legs,
-          rideTimeMinutes: estDuration,
-          etaMinutes: estDuration,
-          passengerName: data.passengerNames?.[0] || data.travellerName || "Pasajero Corporativo",
-          passengerPhone: data.passengerPhone,
-          paymentMethod: "corporate",
-          travellerId: data.travellerId || data.companyId,
-        });
-      }
-
-      if (schedRes?.data?.scheduledTripId) {
-        tripId = schedRes.data.scheduledTripId;
-        if (schedRes.data.quote) {
-          finalAmount = schedRes.data.quote.totalAmount;
-        }
-      }
-    } catch (schedErr: any) {
-      if (
-        schedErr?.code === "functions/resource-exhausted" ||
-        schedErr?.code === "functions/failed-precondition"
-      ) {
-        throw schedErr;
-      }
-      console.warn("[requestService] createScheduledTripCallable note:", schedErr?.message);
-    }
-  } else {
-    // Invoke backend callable `createTrip` so server freezes pricing & validates ceiling (CF-08, CF-13, CF-14, CF-23)
-    try {
-      const callableRes = await createTripCallable({
-        countryId: "sv",
-        vehicleCategory: data.vehicleCategory,
-        legs,
-        travellerId: data.travellerId,
-        origin: data.origin as unknown as Record<string, unknown>,
-        destination: data.destination as unknown as Record<string, unknown>,
-        paymentMethod: "corporate",
-      });
-      if (callableRes?.data?.tripId) {
-        tripId = callableRes.data.tripId;
-        fareBreakdown = callableRes.data.fareBreakdown;
-        finalAmount = callableRes.data.fareBreakdown.farePrice;
-      }
-    } catch (err: any) {
-      if (err?.code === "functions/resource-exhausted") {
-        throw err;
-      }
-      console.warn("[requestService] createTripCallable fallback:", err?.message);
-    }
-  }
-
-  if (!fareBreakdown) {
-    const cleanFinal = Number(finalAmount || 0);
-    const driverEarning = Number((cleanFinal * 0.7).toFixed(2));
-    const commissionAmount = Number((cleanFinal - driverEarning).toFixed(2));
-    fareBreakdown = {
-      countryId: "sv",
-      currency: "USD",
-      distanceUnit: "km",
-      chargedDistance: data.estimatedDistanceKm,
-      farePrice: cleanFinal,
-      driverEarning,
-      commissionRate: 0.3,
-      commissionAmount,
-      minimumApplied: Boolean(
-        data.tariffApplied &&
-          data.estimatedDistanceKm <= data.tariffApplied.baseDistanceKm
-      ),
-      pricingFormulaVersion: "h1-v1",
-    };
-  }
-
-  const folio =
-    (data as any).folio ||
-    (tripId
-      ? `B2B-SV-${new Date().getFullYear()}-${tripId.slice(0, 6).toUpperCase()}`
-      : `B2B-SV-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`);
-
-  const payload = sanitizeFirestorePayload({
-    ...data,
-    legs,
-    ...(tripId ? { tripId } : {}),
-    ...(fareBreakdown ? { fareBreakdown } : {}),
-    finalAmount,
-    folio,
-    countryId: "sv",
-    status: data.status || "requested",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-
-  try {
-    const docRef = await addDoc(collection(db, REQUESTS_COLLECTION), payload);
-    return { id: docRef.id, folio, tripId };
-  } catch (addErr: any) {
-    if (
-      addErr?.code === "permission-denied" ||
-      addErr?.message?.includes("insufficient permissions")
-    ) {
-      console.warn(
-        "[requestService] b2bRequests direct write rejected by security rules:",
-        addErr
-      );
-      if (tripId) {
-        // Scheduled trip was successfully booked in backend callable
-        return { id: tripId, folio, tripId };
-      }
+    const reason = (data.reason || (data as any).notes || "").trim();
+    if (!reason) {
       throw new Error(
-        "Permiso denegado por reglas de Firestore. El backend requiere crear reservas mediante 'createScheduledTrip', pero la función rechazó al SuperAdmin (falta soporte de companyId en payload para operadores de plataforma)."
+        "El motivo de la operación en plataforma (reason) es obligatorio para auditoría B2B."
       );
     }
-    throw addErr;
+
+    // CF-86: Invocar el callable oficial de plataforma para reservas en nombre de la empresa
+    const schedRes = await createScheduledTripForCompanyCallable({
+      countryId: "sv",
+      companyId: data.companyId,
+      costCentreId: data.costCenterId || undefined,
+      scheduledPickupAt: scheduledPickupAtIso,
+      passengerCount: data.passengersCount,
+      originAddress: data.origin.address,
+      originLatitude: data.origin.lat,
+      originLongitude: data.origin.lng,
+      destinationAddress: data.destination.address,
+      destinationLatitude: data.destination.lat,
+      destinationLongitude: data.destination.lng,
+      legs,
+      rideTimeMinutes: estDuration,
+      etaMinutes: estDuration,
+      paymentMethod: "company_account",
+      travellerId: data.travellerId,
+      reason,
+    });
+
+    tripId = schedRes.data.scheduledTripId;
+    folio = schedRes.data.folio;
+  } else {
+    // Invoke backend callable `createTrip` for immediate requests
+    const callableRes = await createTripCallable({
+      countryId: "sv",
+      vehicleCategory: data.vehicleCategory,
+      legs,
+      travellerId: data.travellerId,
+      origin: data.origin as unknown as Record<string, unknown>,
+      destination: data.destination as unknown as Record<string, unknown>,
+      paymentMethod: "company_account",
+    });
+    if (callableRes?.data?.tripId) {
+      tripId = callableRes.data.tripId;
+      folio = `B2B-SV-${new Date().getFullYear()}-${tripId.slice(0, 6).toUpperCase()}`;
+    }
   }
+
+  notifyRequestSubscribers();
+  return { id: tripId || "", folio, tripId };
+};
+
+export const releaseB2BRequestToPool = async (
+  requestId: string,
+  scheduledTripId: string,
+  reason: string
+): Promise<void> => {
+  if (!reason?.trim()) {
+    throw new Error("El motivo de devolución al pool es obligatorio (CF-86).");
+  }
+  await releaseScheduledTripByPlatformCallable({
+    scheduledTripId,
+    reason: reason.trim(),
+  });
+  notifyRequestSubscribers();
 };
 
 export const assignB2BRequestVehicleAndDriver = async (

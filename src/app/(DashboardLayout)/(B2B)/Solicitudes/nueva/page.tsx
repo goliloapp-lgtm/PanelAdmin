@@ -62,7 +62,7 @@ import {
   getAllowedCategoriesForPassengers,
 } from "@/utils/b2bPricing";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { getFareQuoteCallable } from "@/utils/functions";
+import { getFareQuoteCallable, FareQuote } from "@/utils/functions";
 import GoogleAddressAutocomplete from "../../_components/GoogleAddressAutocomplete";
 import GoogleRouteMap from "../../_components/GoogleRouteMap";
 
@@ -76,17 +76,7 @@ const NuevaSolicitudB2BPage = () => {
   const [error, setError] = useState<string | null>(null);
 
   // Backend quote state (getFareQuote callable)
-  const [backendQuote, setBackendQuote] = useState<{
-    totalAmount: number;
-    farePrice: number;
-    appliedFareRate: number;
-    chargedDistance: number;
-    minimumDistance: number;
-    minimumApplied: boolean;
-    taxAmount?: number;
-    taxRate?: number;
-    currency: string;
-  } | null>(null);
+  const [backendQuote, setBackendQuote] = useState<FareQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
 
   const [companyId, setCompanyId] = useState("");
@@ -151,6 +141,7 @@ const NuevaSolicitudB2BPage = () => {
     number | ""
   >("");
   const [notes, setNotes] = useState("");
+  const [platformReason, setPlatformReason] = useState("");
 
   useEffect(() => {
     const unsub = subscribeToB2BCompanies((list) => {
@@ -313,6 +304,18 @@ const NuevaSolicitudB2BPage = () => {
       setError("Selecciona una empresa corporativa B2B.");
       return;
     }
+    if (!selectedTraveller || !travellerId) {
+      setError("Debes seleccionar un viajero registrado para la empresa.");
+      return;
+    }
+    if (!isImmediate && !platformReason.trim()) {
+      setError("El motivo de la operación por plataforma es obligatorio para auditoría (CF-86).");
+      return;
+    }
+    if (platformReason.trim().length > 500) {
+      setError("El motivo de la operación no debe exceder los 500 caracteres.");
+      return;
+    }
     if (!originCoord.address.trim() || !destinationCoord.address.trim()) {
       setError("Ingresa la dirección de origen y destino.");
       return;
@@ -367,8 +370,6 @@ const NuevaSolicitudB2BPage = () => {
       const effectiveCostCenterName =
         effectiveCostCenter?.name || effectiveCostCenter?.department || "General";
 
-      const effectiveTraveller = selectedTraveller || (travellers.length > 0 ? travellers[0] : null);
-
       await createB2BServiceRequest({
         companyId: selectedCompany.id,
         companyName: selectedCompany.tradeName || selectedCompany.legalName,
@@ -376,8 +377,8 @@ const NuevaSolicitudB2BPage = () => {
         costCenterName: effectiveCostCenterName,
         requestedByUid: "superAdminSv",
         requestedByName: requestedByName.trim() || "Coordinador B2B",
-        travellerId: effectiveTraveller?.id || "",
-        travellerName: effectiveTraveller?.name || "",
+        travellerId: selectedTraveller.id,
+        travellerName: selectedTraveller.name || "",
         passengersCount,
         passengerNames,
         passengerPhone: passengerPhone.trim(),
@@ -393,18 +394,19 @@ const NuevaSolicitudB2BPage = () => {
           ? new Date().toISOString()
           : new Date(scheduledDateTime).toISOString(),
         isImmediate,
-        estimatedDistanceKm: tariffBreakdown.billableDistanceKm,
+        estimatedDistanceKm: backendQuote ? backendQuote.chargedDistance : tariffBreakdown.billableDistanceKm,
         estimatedDurationMinutes: tariffBreakdown.estimatedDurationMinutes,
         tariffApplied: {
           category: vehicleCategory,
-          ratePerKm: tariffBreakdown.ratePerKm,
+          ratePerKm: backendQuote ? backendQuote.appliedFareRate : tariffBreakdown.ratePerKm,
           minFare: tariffBreakdown.minFare,
           baseDistanceKm: tariffBreakdown.baseDistanceKm,
-          calculatedAmount: tariffBreakdown.finalFare,
+          calculatedAmount: backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare,
         },
-        finalAmount: tariffBreakdown.finalFare,
+        finalAmount: backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare,
         status: "requested",
         notes: notes.trim() || "",
+        reason: platformReason.trim(),
       });
 
       router.push("/Solicitudes");
@@ -508,7 +510,8 @@ const NuevaSolicitudB2BPage = () => {
                     <TextField
                       select
                       fullWidth
-                      label="Viajero Hospedado (`travellers/{travellerId}`)"
+                      required
+                      label="Viajero Hospedado (`travellers/{travellerId}`) *"
                       value={travellerId}
                       onChange={(e) => {
                         const tId = e.target.value;
@@ -519,8 +522,10 @@ const NuevaSolicitudB2BPage = () => {
                           setPassengerNamesInput(found.name);
                         }
                       }}
+                      error={!travellerId && travellers.length > 0}
+                      helperText={!travellerId ? "Selección obligatoria de viajero registrado" : undefined}
                     >
-                      <MenuItem value="">-- Selección libre / Comitiva --</MenuItem>
+                      <MenuItem value="" disabled>-- Selecciona un viajero corporativo * --</MenuItem>
                       {travellers.map((t) => (
                         <MenuItem key={t.id} value={t.id}>
                           {t.name} ({t.department || t.employeeCode || "Corporativo"})
@@ -544,6 +549,21 @@ const NuevaSolicitudB2BPage = () => {
                       label="Teléfono de Contacto de Pasajeros (+503)"
                       value={passengerPhone}
                       onChange={(e) => setPassengerPhone(e.target.value)}
+                    />
+                  </Grid>
+
+                  <Grid size={{ xs: 12, sm: 12 }}>
+                    <TextField
+                      fullWidth
+                      required
+                      multiline
+                      rows={2}
+                      label="Motivo de la Operación en Plataforma (CF-86) *"
+                      placeholder="Ej: Solicitud telefónica de la empresa para traslado de directivo..."
+                      value={platformReason}
+                      onChange={(e) => setPlatformReason(e.target.value)}
+                      error={!isImmediate && !platformReason.trim()}
+                      helperText="Obligatorio para auditoría en operaciones creadas en nombre de la empresa aliada (máx 500 caracteres)."
                     />
                   </Grid>
                 </Grid>
@@ -1048,10 +1068,24 @@ const NuevaSolicitudB2BPage = () => {
 
                   <Stack direction="row" justifyContent="space-between">
                     <Typography variant="body2" color="textSecondary">
+                      Distancia de Ruta:
+                    </Typography>
+                    <Typography variant="body2" fontWeight={600}>
+                      {backendQuote ? backendQuote.chargedDistance.toFixed(1) : tariffBreakdown.billableDistanceKm} km
+                    </Typography>
+                  </Stack>
+
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography variant="body2" color="textSecondary">
                       Distancia Total Facturable:
                     </Typography>
                     <Typography variant="body2" fontWeight={700}>
-                      {backendQuote ? backendQuote.chargedDistance.toFixed(1) : tariffBreakdown.billableDistanceKm} km
+                      {backendQuote ? backendQuote.billableDistance.toFixed(1) : tariffBreakdown.billableDistanceKm} km
+                      {backendQuote?.minimumApplied && (
+                        <Typography component="span" variant="caption" color="primary.main" fontWeight={700} sx={{ ml: 0.75 }}>
+                          (Piso Mínimo)
+                        </Typography>
+                      )}
                     </Typography>
                   </Stack>
 
@@ -1075,19 +1109,10 @@ const NuevaSolicitudB2BPage = () => {
                     </Typography>
                   </Stack>
 
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography variant="body2" color="textSecondary">
-                      Tarifa Mínima ({backendQuote?.minimumDistance ?? tariffBreakdown.baseDistanceKm} km):
-                    </Typography>
-                    <Typography variant="body2" fontWeight={600}>
-                      ${tariffBreakdown.minFare.toFixed(2)} USD
-                    </Typography>
-                  </Stack>
-
                   {backendQuote?.farePrice != null && (
                     <Stack direction="row" justifyContent="space-between">
                       <Typography variant="body2" color="textSecondary">
-                        Subtotal Base ({backendQuote.chargedDistance.toFixed(1)} km):
+                        Subtotal Base ({backendQuote.billableDistance.toFixed(1)} km):
                       </Typography>
                       <Typography variant="body2" fontWeight={600}>
                         ${backendQuote.farePrice.toFixed(2)} USD
@@ -1135,12 +1160,12 @@ const NuevaSolicitudB2BPage = () => {
                       fontWeight={800}
                       color="primary.main"
                     >
-                      ${(backendQuote ? backendQuote.totalAmount : tariffBreakdown.finalFare).toFixed(2)}
+                      ${(backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare).toFixed(2)}
                     </Typography>
                     <Typography variant="caption" color="textSecondary" display="block">
                       {backendQuote
                         ? backendQuote.minimumApplied
-                          ? `Tarifa mínima aplicada ($${backendQuote.farePrice.toFixed(2)} USD cubre hasta ${backendQuote.minimumDistance ?? 20} km · Ruta: ${backendQuote.chargedDistance.toFixed(1)} km)`
+                          ? `Tarifa mínima aplicada: facturado a ${backendQuote.billableDistance.toFixed(1)} km (Ruta real: ${backendQuote.chargedDistance.toFixed(1)} km)`
                           : `Tarifa real aplicada (${backendQuote.chargedDistance.toFixed(1)} km × $${backendQuote.appliedFareRate.toFixed(2)}/km + IVA)`
                         : tariffBreakdown.breakdownSummary}
                     </Typography>
