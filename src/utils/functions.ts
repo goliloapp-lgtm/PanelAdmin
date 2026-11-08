@@ -758,7 +758,7 @@ export const listTravellersCallable = httpsCallable<
   { travellers: TravellerRow[]; count: number }
 >(functions, "listTravellers");
 
-// --- CF-48 / CF-54: createScheduledTrip, cancelScheduledTrip ---
+// --- CF-48 / CF-54 / CF-86: createScheduledTrip, createScheduledTripForCompany, cancelScheduledTrip ---
 export const createScheduledTripCallable = httpsCallable<
   {
     travellerId: string;
@@ -797,8 +797,71 @@ export const createScheduledTripCallable = httpsCallable<
   }
 >(functions, "createScheduledTrip");
 
+// CF-86: Operaciones de plataforma sobre reservas B2B (SuperAdmin / Admin)
+export const createScheduledTripForCompanyCallable = httpsCallable<
+  {
+    companyId: string;
+    countryId?: string;
+    travellerId: string;
+    costCentreId?: string;
+    passengerCount: number;
+    scheduledPickupAt: string;
+    originAddress?: string;
+    originLatitude?: number;
+    originLongitude?: number;
+    destinationAddress?: string;
+    destinationLatitude?: number;
+    destinationLongitude?: number;
+    legs: Array<{ distance: number; durationMinutes: number }>;
+    rideTimeMinutes?: number;
+    etaMinutes?: number;
+    paymentMethod?: string;
+    reason: string;
+  },
+  {
+    scheduledTripId: string;
+    status: "available";
+    countryId: string;
+    companyId: string;
+    travellerId: string;
+    scheduledPickupAt: string;
+    passengerCount: number;
+    categoryId: string;
+    quote: FareQuote;
+    ceilingReservedAt: string;
+    ceilingReservedAmount: number;
+    costCentreId: string;
+  }
+>(functions, "createScheduledTripForCompany");
+
+export const assignScheduledTripDriverCallable = httpsCallable<
+  {
+    scheduledTripId: string;
+    driverId: string;
+    vehicleId: string;
+    reason: string;
+  },
+  {
+    scheduledTripId: string;
+    status: "driver_assigned";
+    driverId: string;
+    vehicleId: string;
+  }
+>(functions, "assignScheduledTripDriver");
+
+export const releaseScheduledTripByPlatformCallable = httpsCallable<
+  {
+    scheduledTripId: string;
+    reason: string;
+  },
+  {
+    scheduledTripId: string;
+    status: "available";
+  }
+>(functions, "releaseScheduledTripByPlatform");
+
 export const cancelScheduledTripCallable = httpsCallable<
-  { scheduledTripId: string },
+  { scheduledTripId: string; reason?: string },
   {
     scheduledTripId: string;
     status: "cancelled";

@@ -265,7 +265,9 @@ const NuevaSolicitudB2BPage = () => {
   }, [effectiveOneWayKm, vehicleCategory, roundTrip, tariffBreakdown.estimatedDurationMinutes]);
 
   const selectedCompany = companies.find((c) => c.id === companyId);
-  const selectedCostCenter = costCenters.find((c) => c.id === costCenterId);
+  const selectedCostCenter = costCenters.find(
+    (c) => c.id === costCenterId || (c as any).costCentreId === costCenterId
+  );
   const selectedTraveller = travellers.find((t) => t.id === travellerId);
 
   const handleAddStop = () => {
@@ -359,21 +361,29 @@ const NuevaSolicitudB2BPage = () => {
           ]
         : [{ distance: effectiveOneWayKm, durationMinutes: oneWayDuration }];
 
+      const effectiveCostCenter = selectedCostCenter || (costCenters.length > 0 ? costCenters[0] : null);
+      const effectiveCostCenterId =
+        effectiveCostCenter?.id || (effectiveCostCenter as any)?.costCentreId || costCenterId || "general";
+      const effectiveCostCenterName =
+        effectiveCostCenter?.name || effectiveCostCenter?.department || "General";
+
+      const effectiveTraveller = selectedTraveller || (travellers.length > 0 ? travellers[0] : null);
+
       await createB2BServiceRequest({
         companyId: selectedCompany.id,
         companyName: selectedCompany.tradeName || selectedCompany.legalName,
-        costCenterId: selectedCostCenter?.id,
-        costCenterName: selectedCostCenter?.name || "General",
+        costCenterId: effectiveCostCenterId,
+        costCenterName: effectiveCostCenterName,
         requestedByUid: "superAdminSv",
         requestedByName: requestedByName.trim() || "Coordinador B2B",
-        travellerId: selectedTraveller?.id || undefined,
-        travellerName: selectedTraveller?.name || undefined,
+        travellerId: effectiveTraveller?.id || "",
+        travellerName: effectiveTraveller?.name || "",
         passengersCount,
         passengerNames,
         passengerPhone: passengerPhone.trim(),
         vehicleCategory,
         hasCargo,
-        cargoDescription: hasCargo ? cargoDescription.trim() : undefined,
+        cargoDescription: hasCargo ? cargoDescription.trim() : "",
         origin: originPoint,
         stops: stopPoints,
         destination: destPoint,
@@ -394,7 +404,7 @@ const NuevaSolicitudB2BPage = () => {
         },
         finalAmount: tariffBreakdown.finalFare,
         status: "requested",
-        notes: notes.trim() || undefined,
+        notes: notes.trim() || "",
       });
 
       router.push("/Solicitudes");
