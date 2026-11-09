@@ -272,9 +272,9 @@ export interface WriteTripHistoryParams {
   driverId: string;
   passengerName: string;
   passengerPhone?: string;
-  origin: string;
-  destination: string;
-  distance: number;
+  origin: string | { address: string; latitude?: number; longitude?: number };
+  destination: string | { address: string; latitude?: number; longitude?: number };
+  distance?: number;
   etaMinutes: number;
   startedAt: number;
   completedAt: number;
@@ -1238,6 +1238,53 @@ export const updateCompanyCallable = httpsCallable<
   UpdateCompanyParams,
   UpdateCompanyResponse
 >(functions, "updateCompany");
+
+// --- CF-87: reportTripProblem y reassignTripDriver (2026-11-08) ---
+export interface ReportTripProblemParams {
+  tripId: string;
+  reason: string;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface ReportTripProblemResponse {
+  tripId: string;
+  previousStatus: string | null;
+  status: "seeking_driver";
+  previousDriverId: string | null;
+  reportedBy: "driver" | "platform";
+  reason: string;
+  ceilingTouched: false;
+  reservationUntouched: true;
+}
+
+export const reportTripProblemCallable = httpsCallable<
+  ReportTripProblemParams,
+  ReportTripProblemResponse
+>(functions, "reportTripProblem");
+
+export interface ReassignTripDriverParams {
+  tripId: string;
+  driverId: string;
+  reason: string;
+}
+
+export interface ReassignTripDriverResponse {
+  tripId: string;
+  status: "in_progress";
+  driverId: string;
+  previousDriverId: string | null;
+  reason: string;
+  ceilingTouched: false;
+  reservationUntouched: true;
+  startedAtUntouched: true;
+}
+
+export const reassignTripDriverCallable = httpsCallable<
+  ReassignTripDriverParams,
+  ReassignTripDriverResponse
+>(functions, "reassignTripDriver");
+
 
 
 

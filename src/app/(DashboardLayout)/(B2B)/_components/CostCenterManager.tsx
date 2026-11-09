@@ -42,6 +42,7 @@ import {
   recordLimitRequestAudit,
 } from "@/services/b2b";
 import toast from "react-hot-toast";
+import { formatFriendlyError } from "@/utils/friendlyError";
 
 interface CostCenterManagerProps {
   companyId: string;
@@ -109,7 +110,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
 
   const handleSave = async () => {
     if (!name.trim()) {
-      toast.error("Completa el nombre del centro");
+      toast.error("Por favor ingresa el nombre del centro de costo.");
       return;
     }
 
@@ -118,7 +119,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
     if (!isUnlimited) {
       const numeric = Number(budgetLimitInput);
       if (!Number.isFinite(numeric) || numeric < 0) {
-        toast.error("Ingresa un techo válido (>= 0) o marca 'Sin límite'");
+        toast.error("Ingresa un presupuesto válido o selecciona 'Sin límite'.");
         return;
       }
       parsedLimit = numeric;
@@ -136,7 +137,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
           },
           changeReason.trim() || "Ajuste directo de techo corporativo"
         );
-        toast.success("Techo de consumo actualizado en caliente (CF-81)");
+        toast.success("Límite de presupuesto actualizado correctamente.");
       } else {
         await createCostCenter(companyId, {
           name: name.trim(),
@@ -146,12 +147,14 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
           reserved: 0,
           status: "active",
         });
-        toast.success("Centro de costo agregado exitosamente");
+        toast.success("Centro de costo creado con éxito.");
       }
       setOpenModal(false);
       fetchCostCentersAndAudit();
     } catch (err: any) {
-      toast.error(err?.message || "Error al guardar techo de consumo");
+      toast.error(
+        formatFriendlyError(err, "No se pudo guardar el centro de costo.")
+      );
     } finally {
       setSubmitting(false);
     }

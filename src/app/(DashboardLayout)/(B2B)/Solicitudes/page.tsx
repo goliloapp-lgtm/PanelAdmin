@@ -56,9 +56,13 @@ import {
   updateOperationsConfigCallable,
   listPlatformScheduledTripsCallable,
   PlatformScheduledTripRow,
+  listPlatformTripsCallable,
+  writeTripHistoryCallable,
 } from "@/utils/functions";
 import GoogleTripTrackingMap from "../_components/GoogleTripTrackingMap";
 import StatusBadge from "../_components/StatusBadge";
+import toast from "react-hot-toast";
+import { formatFriendlyError } from "@/utils/friendlyError";
 import {
   B2BCompany,
   B2BRequestStatus,
@@ -74,6 +78,8 @@ import {
   cancelB2BCompanyReservation,
   withdrawB2BDriverAvailability,
   releaseB2BRequestToPool,
+  reportB2BTripProblem,
+  reassignB2BTripDriver,
 } from "@/services/b2b";
 
 const LIFECYCLE_STEPS: Array<{ status: B2BRequestStatus; label: string }> = [
@@ -94,13 +100,67 @@ const B2BSolicitudesPage = () => {
   const [platformScheduledTrips, setPlatformScheduledTrips] = useState<
     PlatformScheduledTripRow[]
   >([]);
+  const [platformTrips, setPlatformTrips] = useState<any[]>([]);
   const [companies, setCompanies] = useState<B2BCompany[]>([]);
   const [vehicles, setVehicles] = useState<B2BVehicle[]>([]);
   const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState<{
+  const [feedback, setFeedbackState] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
+
+  const setFeedback = (
+    next: { type: "success" | "error"; message: string } | null
+  ) => {
+    if (!next) {
+      setFeedbackState(null);
+      return;
+    }
+    const cleanMsg =
+      next.type === "error"
+        ? formatFriendlyError(next.message)
+        : next.message.replace(/\((?:CF|LO|D)-\d+(?:\.\d+)?\)/gi, "").trim();
+    setFeedbackState({ type: next.type, message: cleanMsg });
+    if (next.type === "error") {
+      toast.error(cleanMsg);
+    } else {
+      toast.success(cleanMsg);
+    }
+  };
+
+  // Overrides de estado operativo manual para asegurar reactividad inmediata
+  const [rtdbRidesMap, setRtdbRidesMap] = useState<Record<string, any>>({});
+  const [operationalStatusMap, setOperationalStatusMap] = useState<
+    Record<string, B2BRequestStatus>
+  >(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("lilo_b2b_operational_status_map");
+        return saved ? JSON.parse(saved) : {};
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  });
+
+  const setOperationalStatus = (id: string, status: B2BRequestStatus) => {
+    setOperationalStatusMap((prev) => {
+      const updated = {
+        ...prev,
+        [id]: status,
+      };
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(
+            "lilo_b2b_operational_status_map",
+            JSON.stringify(updated)
+          );
+        } catch {}
+      }
+      return updated;
+    });
+  };
 
   const [searchTerm, setSearchTerm] = useState("");
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -151,12 +211,24 @@ const B2BSolicitudesPage = () => {
     if (isFetchingTripsRef.current) return;
     try {
       isFetchingTripsRef.current = true;
-      const res = await listPlatformScheduledTripsCallable({ countryId: "sv" });
-      if (res.data?.scheduledTrips) {
-        setPlatformScheduledTrips(res.data.scheduledTrips);
+      const [resSched, resTrips] = await Promise.allSettled([
+        listPlatformScheduledTripsCallable({ countryId: "sv" }),
+        listPlatformTripsCallable({ countryId: "sv", limit: 50 }),
+      ]);
+      if (
+        resSched.status === "fulfilled" &&
+        resSched.value.data?.scheduledTrips
+      ) {
+        setPlatformScheduledTrips(resSched.value.data.scheduledTrips);
+      }
+      if (
+        resTrips.status === "fulfilled" &&
+        (resTrips.value.data as any)?.trips
+      ) {
+        setPlatformTrips((resTrips.value.data as any).trips);
       }
     } catch (err: any) {
-      console.warn("[Solicitudes] listPlatformScheduledTrips error:", err?.message || err);
+      console.warn("[Solicitudes] fetch trips error:", err?.message || err);
     } finally {
       isFetchingTripsRef.current = false;
     }
@@ -222,18 +294,43 @@ const B2BSolicitudesPage = () => {
 
   const mappedScheduledRequests = useMemo<B2BServiceRequest[]>(() => {
     return platformScheduledTrips.map((st) => {
-      const mappedStatus = normalizeStatus(st.status);
-      const veh = vehicles.find((v) => v.id === st.acceptedVehicleId);
+      const liveTrip = platformTrips.find(
+        (t) => t.tripId === st.scheduledTripId
+      );
+      const rtdbRide = rtdbRidesMap[st.scheduledTripId];
+      const effectiveRawStatus =
+        rtdbRide?.mappedB2BStatus || liveTrip?.status || st.status;
+      const mappedStatus = normalizeStatus(effectiveRawStatus);
+      const effectiveVehId = rtdbRide?.vehicleId || st.acceptedVehicleId;
+      const veh = vehicles.find((v) => v.id === effectiveVehId);
       const comp = companies.find((c) => c.id === st.companyId);
 
-      const driverName =
-        veh?.driverName || (st as any).driverName || undefined;
-      const driverPhone =
-        veh?.driverPhone || (st as any).driverPhone || undefined;
-      const driverId =
-        (st as any).driverId || veh?.driverId || undefined;
-      const vehiclePlate =
-        veh?.plate || (st as any).vehiclePlate || undefined;
+      const isSeeking =
+        mappedStatus === "seeking_driver" || mappedStatus === "requested";
+      const driverName = isSeeking
+        ? undefined
+        : rtdbRide?.driverName ||
+          veh?.driverName ||
+          (st as any).driverName ||
+          undefined;
+      const driverPhone = isSeeking
+        ? undefined
+        : rtdbRide?.driverPhone ||
+          veh?.driverPhone ||
+          (st as any).driverPhone ||
+          undefined;
+      const driverId = isSeeking
+        ? undefined
+        : rtdbRide?.driverId ||
+          (st as any).driverId ||
+          veh?.driverId ||
+          undefined;
+      const vehiclePlate = isSeeking
+        ? undefined
+        : rtdbRide?.vehiclePlate ||
+          veh?.plate ||
+          (st as any).vehiclePlate ||
+          undefined;
 
       return {
         id: st.scheduledTripId,
@@ -266,10 +363,18 @@ const B2BSolicitudesPage = () => {
           lng: -89.2300,
         },
         roundTrip: false,
-        legs: [{ distance: 15, durationMinutes: 25 }],
+        legs: [
+          {
+            distance: Number(rtdbRide?.chargedDistance || (st as any).chargedDistance || 15),
+            durationMinutes: 25,
+          },
+        ],
         scheduledAt: st.scheduledPickupAt,
+        createdAt: rtdbRide?.createdAt || (st as any).createdAt || undefined,
         isImmediate: false,
-        estimatedDistanceKm: 15,
+        estimatedDistanceKm: Number(
+          rtdbRide?.chargedDistance || (st as any).chargedDistance || 15
+        ),
         estimatedDurationMinutes: 25,
         tariffApplied: {
           category: (st.categoryId as any) || "suv",
@@ -294,35 +399,129 @@ const B2BSolicitudesPage = () => {
         assignedDriverId: driverId,
         assignedDriverName: driverName,
         assignedDriverPhone: driverPhone,
-        assignedVehicleId: st.acceptedVehicleId,
+        assignedVehicleId: isSeeking ? undefined : effectiveVehId,
         assignedVehiclePlate: vehiclePlate,
         status: mappedStatus,
       };
     });
-  }, [platformScheduledTrips, vehicles, companies]);
+  }, [platformScheduledTrips, platformTrips, rtdbRidesMap, vehicles, companies]);
+
+  const getLifecycleStepIndex = (status: string): number => {
+    const norm = normalizeStatus(status);
+    const idx = LIFECYCLE_STEPS.findIndex((s) => s.status === norm);
+    if (norm === "invoiced") return LIFECYCLE_STEPS.length;
+    return idx >= 0 ? idx : 0;
+  };
 
   const requests = useMemo<B2BServiceRequest[]>(() => {
-    const list = [...rawRequests];
+    const list: B2BServiceRequest[] = rawRequests.map((r) => {
+      const targetId = r.tripId || (r as any).scheduledTripId || r.id;
+      const rtdbRide = rtdbRidesMap[targetId] || rtdbRidesMap[r.id];
+      const overrideStatus =
+        operationalStatusMap[targetId] ||
+        operationalStatusMap[r.id] ||
+        (rtdbRide?.mappedB2BStatus as B2BRequestStatus | undefined);
+      const resolvedStatus = overrideStatus || r.status;
+      const isSeeking =
+        resolvedStatus === "seeking_driver" || resolvedStatus === "requested";
+      const effVehId = rtdbRide?.vehicleId || r.assignedVehicleId;
+      const veh = vehicles.find((v) => v.id === effVehId);
+      return {
+        ...r,
+        status: resolvedStatus,
+        assignedDriverId: isSeeking
+          ? undefined
+          : rtdbRide?.driverId || r.assignedDriverId || veh?.driverId,
+        assignedDriverName: isSeeking
+          ? undefined
+          : rtdbRide?.driverName || r.assignedDriverName || veh?.driverName,
+        assignedDriverPhone: isSeeking
+          ? undefined
+          : rtdbRide?.driverPhone || r.assignedDriverPhone || veh?.driverPhone,
+        assignedVehicleId: isSeeking ? undefined : effVehId,
+        assignedVehiclePlate: isSeeking
+          ? undefined
+          : rtdbRide?.vehiclePlate || r.assignedVehiclePlate || veh?.plate,
+        notes: rtdbRide?.interruptionReason || r.notes,
+      };
+    });
+
     for (const sReq of mappedScheduledRequests) {
       const existingIdx = list.findIndex(
-        (r) => r.id === sReq.id || (r as any).scheduledTripId === sReq.id || r.tripId === sReq.id
+        (r) =>
+          r.id === sReq.id ||
+          (r as any).scheduledTripId === sReq.id ||
+          r.tripId === sReq.id
       );
+
+      const overrideStatus =
+        operationalStatusMap[sReq.id] ||
+        (sReq.tripId ? operationalStatusMap[sReq.tripId] : undefined) ||
+        operationalStatusMap[(sReq as any).scheduledTripId || ""];
+
       if (existingIdx >= 0) {
+        const currentStatus =
+          overrideStatus || list[existingIdx].status;
+        const currentStep = getLifecycleStepIndex(currentStatus);
+        const scheduledStep = getLifecycleStepIndex(sReq.status);
+        const resolvedStatus =
+          overrideStatus ||
+          (currentStep > scheduledStep ? currentStatus : sReq.status);
+        const isSeeking =
+          resolvedStatus === "seeking_driver" || resolvedStatus === "requested";
+
         list[existingIdx] = {
           ...list[existingIdx],
-          status: sReq.status,
-          assignedDriverId: sReq.assignedDriverId || list[existingIdx].assignedDriverId,
-          assignedDriverName: sReq.assignedDriverName || list[existingIdx].assignedDriverName,
-          assignedDriverPhone: sReq.assignedDriverPhone || list[existingIdx].assignedDriverPhone,
-          assignedVehicleId: sReq.assignedVehicleId || list[existingIdx].assignedVehicleId,
-          assignedVehiclePlate: sReq.assignedVehiclePlate || list[existingIdx].assignedVehiclePlate,
+          ...sReq,
+          status: resolvedStatus,
+          assignedDriverId: isSeeking
+            ? undefined
+            : sReq.assignedDriverId || list[existingIdx].assignedDriverId,
+          assignedDriverName: isSeeking
+            ? undefined
+            : sReq.assignedDriverName || list[existingIdx].assignedDriverName,
+          assignedDriverPhone: isSeeking
+            ? undefined
+            : sReq.assignedDriverPhone || list[existingIdx].assignedDriverPhone,
+          assignedVehicleId: isSeeking
+            ? undefined
+            : sReq.assignedVehicleId || list[existingIdx].assignedVehicleId,
+          assignedVehiclePlate: isSeeking
+            ? undefined
+            : sReq.assignedVehiclePlate || list[existingIdx].assignedVehiclePlate,
         };
       } else {
-        list.push(sReq);
+        list.push({
+          ...sReq,
+          status: overrideStatus || sReq.status,
+        });
       }
     }
+
+    const getCreatedTimestamp = (req: B2BServiceRequest): number => {
+      const rtdbC = rtdbRidesMap[req.id]?.createdAt;
+      if (typeof rtdbC === "number" && rtdbC > 0) return rtdbC;
+      if (typeof rtdbC === "string") {
+        const parsed = Date.parse(rtdbC);
+        if (!isNaN(parsed)) return parsed;
+      }
+      const c = req.createdAt as any;
+      if (typeof c === "number" && c > 0) return c;
+      if (typeof c?.toMillis === "function") return c.toMillis();
+      if (typeof c?.seconds === "number") return c.seconds * 1000;
+      if (typeof c === "string") {
+        const parsed = Date.parse(c);
+        if (!isNaN(parsed)) return parsed;
+      }
+      const rtdbUpd = rtdbRidesMap[req.id]?.updatedAt;
+      if (typeof rtdbUpd === "number" && rtdbUpd > 0) return rtdbUpd;
+      return Date.parse(String(req.scheduledAt || "")) || 0;
+    };
+
+    list.sort((a, b) => getCreatedTimestamp(b) - getCreatedTimestamp(a));
+
     return list;
-  }, [rawRequests, mappedScheduledRequests]);
+  }, [rawRequests, mappedScheduledRequests, platformTrips, rtdbRidesMap, vehicles, operationalStatusMap]);
 
   const activeRequest = useMemo(
     () => requests.find((r) => r.id === selectedRequestId) || null,
@@ -374,16 +573,32 @@ const B2BSolicitudesPage = () => {
       .then((res) => setEligibleDrivers(res.data?.drivers || []))
       .catch(() => setEligibleDrivers([]));
 
+    let liveTimer: any = null;
     const subjectId = activeTripId || activeSchedId || selectedRequestId;
     if (subjectId) {
-      listTripEventsCallable({ tripId: subjectId, limit: 25 })
-        .then((res) => setTripEvents(res.data?.events || []))
-        .catch(() => setTripEvents([]));
+      const pollEventsAndTrips = () => {
+        listTripEventsCallable({ tripId: subjectId, limit: 25 })
+          .then((res) => setTripEvents(res.data?.events || []))
+          .catch(() => {});
+        listPlatformTripsCallable({ countryId: "sv", limit: 30 })
+          .then((res) => {
+            if ((res.data as any)?.trips) {
+              setPlatformTrips((res.data as any).trips);
+            }
+          })
+          .catch(() => {});
+      };
+      pollEventsAndTrips();
+      liveTimer = setInterval(pollEventsAndTrips, 4000);
 
       listTripIncidentsCallable({ tripId: subjectId, limit: 20 })
         .then((res) => setTripIncidents(res.data?.incidents || []))
         .catch(() => setTripIncidents([]));
     }
+
+    return () => {
+      if (liveTimer) clearInterval(liveTimer);
+    };
   }, [
     selectedRequestId,
     activeVehicleId,
@@ -422,12 +637,147 @@ const B2BSolicitudesPage = () => {
           heading: val.bearing ?? val.heading,
           status: val.status,
         });
+
+        if (val.status === "on_trip" && activeRequest) {
+          setOperationalStatus(activeRequest.id, "inService");
+          if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "inService");
+        } else if (val.status === "disponible" && !val.currentRideId && activeRequest) {
+          const targetId = activeRequest.tripId || (activeRequest as any).scheduledTripId || activeRequest.id;
+          fetch(`/api/b2b/trip-status?tripId=${encodeURIComponent(targetId)}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (data?.status === "completed") {
+                setOperationalStatus(activeRequest.id, "completed");
+                if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "completed");
+                if ((activeRequest as any).scheduledTripId) {
+                  setOperationalStatus((activeRequest as any).scheduledTripId, "completed");
+                }
+              }
+            })
+            .catch(() => {});
+        }
       } else {
         setDriverTelemetry(null);
       }
     });
     return () => unsub();
   }, [activeRequest?.assignedDriverId]);
+
+  // Sincronización global en tiempo real de todas las filas de la tabla desde RTDB (`?all=1`)
+  useEffect(() => {
+    let isMounted = true;
+    const syncAllRidesFromRtdb = async () => {
+      try {
+        const res = await fetch("/api/b2b/trip-status?all=1");
+        if (!res.ok || !isMounted) return;
+        const payload = await res.json();
+        const rides = payload?.rides || {};
+        setRtdbRidesMap(rides);
+        setOperationalStatusMap((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [rId, rInfo] of Object.entries<any>(rides)) {
+            const b2bSt = rInfo?.mappedB2BStatus as B2BRequestStatus | undefined;
+            if (b2bSt && next[rId] !== b2bSt) {
+              next[rId] = b2bSt;
+              changed = true;
+            }
+          }
+          if (changed && typeof window !== "undefined") {
+            try {
+              localStorage.setItem(
+                "lilo_b2b_operational_status_map",
+                JSON.stringify(next)
+              );
+            } catch {}
+          }
+          return changed ? next : prev;
+        });
+      } catch {}
+    };
+
+    void syncAllRidesFromRtdb();
+    const timer = setInterval(syncAllRidesFromRtdb, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  // CF-65: Sincronización continua de estado en tiempo real con Realtime Database (RTDB)
+  useEffect(() => {
+    const targetRideId =
+      activeRequest?.tripId ||
+      (activeRequest as any)?.scheduledTripId ||
+      activeRequest?.id;
+
+    if (!targetRideId || !activeRequest) return;
+
+    let isMounted = true;
+    const syncRtdbStatus = async () => {
+      try {
+        const res = await fetch(
+          `/api/b2b/trip-status?tripId=${encodeURIComponent(targetRideId)}`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.exists && isMounted) {
+          if (data.driverTelemetry?.lat && data.driverTelemetry?.lng) {
+            setDriverTelemetry((prev) => prev || data.driverTelemetry);
+          }
+          const rtdbStatus = data.status;
+          let mappedB2BStatus: B2BRequestStatus | null = data.mappedB2BStatus || null;
+          if (rtdbStatus === "driver_arrived") mappedB2BStatus = "driverArrived";
+          else if (rtdbStatus === "in_progress") mappedB2BStatus = "inService";
+          else if (rtdbStatus === "seeking_driver") mappedB2BStatus = "seeking_driver";
+          else if (rtdbStatus === "completed") mappedB2BStatus = "completed";
+          else if (rtdbStatus === "cancelled") mappedB2BStatus = "cancelled";
+          else if (rtdbStatus === "accepted") mappedB2BStatus = "enRoute";
+          else if (rtdbStatus === "assigned" || rtdbStatus === "driver_assigned") mappedB2BStatus = "assigned";
+
+          if (mappedB2BStatus) {
+            setOperationalStatus(targetRideId, mappedB2BStatus);
+            setOperationalStatus(activeRequest.id, mappedB2BStatus);
+            if (activeRequest.tripId) {
+              setOperationalStatus(activeRequest.tripId, mappedB2BStatus);
+            }
+            if (mappedB2BStatus === "seeking_driver") {
+              setRawRequests((prev) =>
+                prev.map((r) =>
+                  r.id === activeRequest.id || r.id === targetRideId
+                    ? {
+                        ...r,
+                        status: "seeking_driver",
+                        assignedDriverId: undefined,
+                        assignedDriverName: undefined,
+                        assignedDriverPhone: undefined,
+                        assignedVehicleId: undefined,
+                        assignedVehiclePlate: undefined,
+                        notes: data.interruptionReason || r.notes,
+                      }
+                    : r
+                )
+              );
+            }
+          }
+        }
+      } catch {
+        // Silencio en polling de red
+      }
+    };
+
+    void syncRtdbStatus();
+    const timer = setInterval(syncRtdbStatus, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [
+    activeRequest?.id,
+    activeRequest?.tripId,
+    (activeRequest as any)?.scheduledTripId,
+  ]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter((req) => {
@@ -485,6 +835,72 @@ const B2BSolicitudesPage = () => {
     setUpdating(true);
     try {
       const schedId = (activeRequest as any)?.scheduledTripId || activeRequest.tripId;
+      const targetTripId = activeRequest.tripId || schedId || activeRequest.id;
+
+      // CF-87 Corrección 13: Si el traslado está en `seeking_driver` tras un reporte de problema en ruta,
+      // reasignamos vía `reassignTripDriver` (con motivo obligatorio <= 500 caracteres) y vuelve a `in_progress`.
+      if (activeRequest.status === "seeking_driver") {
+        const reasonPrompt = window.prompt(
+          "Ingresa el motivo de reasignación del conductor (obligatorio CF-87, máx. 500 caracteres):",
+          activeRequest.notes
+            ? `Reemplazo de unidad por: ${activeRequest.notes}`
+            : "Reasignación operativa por incidencia reportada en ruta"
+        );
+        if (!reasonPrompt || !reasonPrompt.trim()) {
+          setFeedback({
+            type: "error",
+            message: "El motivo de reasignación es obligatorio (CF-87).",
+          });
+          setUpdating(false);
+          return;
+        }
+
+        await reassignB2BTripDriver(activeRequest.id, {
+          tripId: targetTripId,
+          driverId: resolvedDriverId,
+          driverName: resolvedDriverName,
+          driverPhone: resolvedDriverPhone,
+          vehicleId: veh.id,
+          vehiclePlate: veh.plate,
+          reason: reasonPrompt.trim().slice(0, 500),
+        });
+
+        setOperationalStatus(activeRequest.id, "inService");
+        setOperationalStatus(targetTripId, "inService");
+        if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "inService");
+        if ((activeRequest as any).scheduledTripId) {
+          setOperationalStatus((activeRequest as any).scheduledTripId, "inService");
+        }
+
+        setRawRequests((prev) =>
+          prev.map((r) =>
+            r.id === activeRequest.id || r.id === targetTripId
+              ? {
+                  ...r,
+                  assignedDriverId: resolvedDriverId,
+                  assignedDriverName: resolvedDriverName,
+                  assignedDriverPhone: resolvedDriverPhone,
+                  assignedVehicleId: veh.id,
+                  assignedVehiclePlate: veh.plate,
+                  status: "inService",
+                  notes: reasonPrompt.trim().slice(0, 500),
+                }
+              : r
+          )
+        );
+
+        listTripEventsCallable({ tripId: targetTripId, limit: 30 })
+          .then((res) => setTripEvents(res.data?.events || []))
+          .catch(() => {});
+
+        await fetchScheduledTrips();
+        setFeedback({
+          type: "success",
+          message: `Conductor reasignado (${resolvedDriverName} · ${veh.plate}) vía reassignTripDriver (CF-87). El viaje continúa en curso (in_progress) con su startedAt y techo intactos.`,
+        });
+        return;
+      }
+
       await assignB2BRequestVehicleAndDriver(activeRequest.id, {
         driverId: resolvedDriverId,
         driverName: resolvedDriverName,
@@ -494,6 +910,10 @@ const B2BSolicitudesPage = () => {
         scheduledTripId: schedId,
         tripId: activeRequest.tripId,
       });
+      setOperationalStatus(activeRequest.id, "assigned");
+      if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "assigned");
+      if ((activeRequest as any).scheduledTripId) setOperationalStatus((activeRequest as any).scheduledTripId, "assigned");
+
       // Actualizar inmediatamente en estado local para reactividad instantanea
       setRawRequests((prev) =>
         prev.map((r) =>
@@ -529,14 +949,35 @@ const B2BSolicitudesPage = () => {
     if (!activeRequest) return;
     setUpdating(true);
     try {
+      const targetRideId =
+        activeRequest.tripId ||
+        (activeRequest as any)?.scheduledTripId ||
+        activeRequest.id;
+
       if (nextStatus === "cancelled") {
         const res = await cancelB2BCompanyReservation(
           activeRequest.id,
-          activeRequest.tripId
+          targetRideId
         );
+        if (typeof window !== "undefined") {
+          await fetch("/api/b2b/trip-status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tripId: targetRideId,
+              status: "cancelled",
+              driverId: activeRequest.assignedDriverId || "ZFpZfYKfuSf0T0c04wqnBNknkiw2",
+            }),
+          }).catch((e) => console.warn("[Solicitudes] Error cancelando en API RTDB:", e));
+        }
+        setOperationalStatus(targetRideId, "cancelled");
+        setOperationalStatus(activeRequest.id, "cancelled");
+        if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "cancelled");
+        if ((activeRequest as any).scheduledTripId) setOperationalStatus((activeRequest as any).scheduledTripId, "cancelled");
+
         setRawRequests((prev) =>
           prev.map((r) =>
-            r.id === activeRequest.id ? { ...r, status: "cancelled" } : r
+            r.id === activeRequest.id || r.id === targetRideId ? { ...r, status: "cancelled" } : r
           )
         );
         await fetchScheduledTrips();
@@ -547,16 +988,68 @@ const B2BSolicitudesPage = () => {
           ).toFixed(2)} USD.`,
         });
       } else {
+        setOperationalStatus(targetRideId, nextStatus);
+        setOperationalStatus(activeRequest.id, nextStatus);
+        if (activeRequest.tripId) {
+          setOperationalStatus(activeRequest.tripId, nextStatus);
+        }
+        if ((activeRequest as any).scheduledTripId) {
+          setOperationalStatus((activeRequest as any).scheduledTripId, nextStatus);
+        }
+
         await updateB2BRequestStatus(activeRequest.id, nextStatus);
+
+        if (nextStatus === "completed" && activeRequest.assignedDriverId) {
+          writeTripHistoryCallable({
+            tripId: activeRequest.tripId || activeRequest.id,
+            rideId: activeRequest.id,
+            driverId: activeRequest.assignedDriverId,
+            passengerName:
+              activeRequest.passengerNames?.[0] ||
+              activeRequest.travellerName ||
+              "Pasajero Corporativo",
+            passengerPhone: activeRequest.passengerPhone || "+503 7000-0000",
+            origin: {
+              address: activeRequest.origin?.address || "San Salvador",
+              latitude: activeRequest.origin?.lat,
+              longitude: activeRequest.origin?.lng,
+            },
+            destination: {
+              address: activeRequest.destination?.address || "San Salvador",
+              latitude: activeRequest.destination?.lat,
+              longitude: activeRequest.destination?.lng,
+            },
+            distance: activeRequest.estimatedDistanceKm || 15,
+            etaMinutes: activeRequest.estimatedDurationMinutes || 25,
+            startedAt: Date.now() - 30 * 60 * 1000,
+            completedAt: Date.now(),
+            paymentMethod: "corporate_credit",
+          }).catch((e) =>
+            console.warn("[Solicitudes] writeTripHistory error:", e)
+          );
+        }
+
         setRawRequests((prev) =>
           prev.map((r) =>
             r.id === activeRequest.id ? { ...r, status: nextStatus } : r
           )
         );
         await fetchScheduledTrips();
+
+        const statusLabel =
+          nextStatus === "completed"
+            ? "Completado"
+            : nextStatus === "driverArrived"
+            ? "Conductor en Punto"
+            : nextStatus === "inService"
+            ? "En Curso (Viajando)"
+            : nextStatus === "enRoute"
+            ? "En Camino al Origen"
+            : nextStatus;
+
         setFeedback({
           type: "success",
-          message: `Estado del servicio ${activeRequest.folio} actualizado en tiempo real.`,
+          message: `Estado del servicio ${activeRequest.folio} actualizado a "${statusLabel}".`,
         });
       }
     } catch (err: any) {
@@ -571,14 +1064,24 @@ const B2BSolicitudesPage = () => {
 
   const handleDriverUnavailable = async () => {
     if (!activeRequest) return;
+    const isStartedOrEnRoute =
+      activeRequest.status === "inService" ||
+      activeRequest.status === "driverArrived" ||
+      activeRequest.status === "arrived" ||
+      activeRequest.status === "enRoute";
+
     const reasonPrompt = window.prompt(
-      "Ingresa el motivo de devolución de la reserva al pool (requerido para auditoría CF-86):",
-      "Conductor reporta incidente o teléfono apagado; se devuelve al pool"
+      isStartedOrEnRoute
+        ? "Reportar problema en viaje en curso (CF-87 · reportTripProblem). Ingresa el motivo obligatorio (1-500 caracteres):"
+        : "Ingresa el motivo de devolución de la reserva al pool (requerido para auditoría CF-86):",
+      isStartedOrEnRoute
+        ? "Avería mecánica reportada por el conductor; se solicita reasignación de unidad"
+        : "Conductor reporta incidente antes de salir; se devuelve al pool"
     );
     if (!reasonPrompt || !reasonPrompt.trim()) {
       setFeedback({
         type: "error",
-        message: "El motivo de devolución al pool es obligatorio (CF-86).",
+        message: "El motivo es obligatorio para reportar el problema o devolver al pool (CF-86 / CF-87).",
       });
       return;
     }
@@ -588,25 +1091,71 @@ const B2BSolicitudesPage = () => {
       const schedId =
         (activeRequest as any)?.scheduledTripId ||
         (!activeRequest.isImmediate ? activeRequest.tripId : undefined);
+      const targetTripId =
+        activeRequest.tripId || schedId || activeRequest.id;
 
-      if (schedId) {
+      if (isStartedOrEnRoute) {
+        // CF-87: Viaje en curso se reporta vía reportTripProblem y pasa a seeking_driver sin cancelar ni tocar techo
+        await reportB2BTripProblem(
+          activeRequest.id,
+          targetTripId,
+          reasonPrompt.trim().slice(0, 500),
+          {
+            latitude: driverTelemetry?.lat,
+            longitude: driverTelemetry?.lng,
+          },
+          activeRequest.assignedDriverId
+        );
+      } else if (schedId) {
         await releaseB2BRequestToPool(activeRequest.id, schedId, reasonPrompt.trim());
       } else {
         await withdrawB2BDriverAvailability(
           activeRequest.id,
-          activeRequest.tripId,
-          activeRequest.assignedDriverId
+          targetTripId,
+          activeRequest.assignedDriverId,
+          reasonPrompt.trim()
         );
       }
+
+      setOperationalStatus(activeRequest.id, "seeking_driver");
+      setOperationalStatus(targetTripId, "seeking_driver");
+      if (activeRequest.tripId) setOperationalStatus(activeRequest.tripId, "seeking_driver");
+      if ((activeRequest as any).scheduledTripId) {
+        setOperationalStatus((activeRequest as any).scheduledTripId, "seeking_driver");
+      }
+
+      setRawRequests((prev) =>
+        prev.map((r) =>
+          r.id === activeRequest.id || r.id === targetTripId
+            ? {
+                ...r,
+                status: "seeking_driver",
+                assignedDriverId: undefined,
+                assignedDriverName: undefined,
+                assignedDriverPhone: undefined,
+                assignedVehicleId: undefined,
+                assignedVehiclePlate: undefined,
+                notes: reasonPrompt.trim().slice(0, 500),
+              }
+            : r
+        )
+      );
+
+      listTripEventsCallable({ tripId: targetTripId, limit: 30 })
+        .then((res) => setTripEvents(res.data?.events || []))
+        .catch(() => {});
+
       setFeedback({
         type: "success",
-        message: `Reserva devuelta al pool de despacho exitosamente (${activeRequest.folio} → seeking_driver). El techo de la empresa permanece intacto.`,
+        message: isStartedOrEnRoute
+          ? `Problema reportado vía reportTripProblem (${activeRequest.folio} → seeking_driver). Selecciona un nuevo conductor arriba para reasignar el viaje en curso sin tocar el techo (CF-87).`
+          : `Reserva devuelta al pool de despacho exitosamente (${activeRequest.folio} → seeking_driver). El techo de la empresa permanece intacto.`,
       });
       await fetchScheduledTrips();
     } catch (err: any) {
       setFeedback({
         type: "error",
-        message: err.message || "Error al devolver la reserva al pool.",
+        message: err.message || "Error al reportar problema del conductor.",
       });
     } finally {
       setUpdating(false);
@@ -674,10 +1223,7 @@ const B2BSolicitudesPage = () => {
   };
 
   const getActiveStepIndex = (status: string): number => {
-    const norm = normalizeStatus(status);
-    const idx = LIFECYCLE_STEPS.findIndex((s) => s.status === norm);
-    if (norm === "invoiced") return LIFECYCLE_STEPS.length;
-    return idx >= 0 ? idx : 0;
+    return getLifecycleStepIndex(status);
   };
 
   return (
@@ -1089,7 +1635,7 @@ const B2BSolicitudesPage = () => {
 
             {/* Stepper de Estado en Tiempo Real */}
             <Typography variant="subtitle2" fontWeight={700} mb={1.5}>
-              Línea de Tiempo en Vivo (Sincronizada con Firestore)
+              Línea de Tiempo en Vivo (Sincronizada con Realtime Database)
             </Typography>
             <Card variant="outlined" sx={{ mb: 3, bgcolor: "#f8fafc" }}>
               <CardContent>
@@ -1106,10 +1652,19 @@ const B2BSolicitudesPage = () => {
               </CardContent>
             </Card>
 
-            {/* Asignación de Conductor + Unidad */}
+            {/* Asignación / Reasignación de Conductor + Unidad */}
             <Typography variant="subtitle2" fontWeight={700} mb={1}>
-              Despacho: Asignar Unidad y Conductor ({activeRequest.vehicleCategory.toUpperCase()})
+              {activeRequest.status === "seeking_driver"
+                ? `Reasignar Conductor a Viaje Reportado (CF-87 · ${activeRequest.vehicleCategory.toUpperCase()})`
+                : `Despacho: Asignar Unidad y Conductor (${activeRequest.vehicleCategory.toUpperCase()})`}
             </Typography>
+            {activeRequest.status === "seeking_driver" && activeRequest.notes && (
+              <Alert severity="warning" sx={{ mb: 1.5, py: 0.5 }}>
+                <Typography variant="caption" fontWeight={600}>
+                  Motivo del reporte: {activeRequest.notes}
+                </Typography>
+              </Alert>
+            )}
             <Stack direction="row" spacing={1.5} mb={3}>
               <TextField
                 select
@@ -1141,10 +1696,11 @@ const B2BSolicitudesPage = () => {
               </TextField>
               <Button
                 variant="contained"
+                color={activeRequest.status === "seeking_driver" ? "warning" : "primary"}
                 disabled={!selectedVehicleId || updating}
                 onClick={handleAssignVehicle}
               >
-                Asignar
+                {activeRequest.status === "seeking_driver" ? "Reasignar" : "Asignar"}
               </Button>
             </Stack>
 
@@ -1203,31 +1759,58 @@ const B2BSolicitudesPage = () => {
                   Marcar Completado
                 </Button>
               </Grid>
-              <Grid size={{ xs: 6 }}>
+              <Grid
+                size={{
+                  xs:
+                    activeRequest.status === "inService" ||
+                    activeRequest.status === "arrived" ||
+                    activeRequest.status === "driverArrived" ||
+                    activeRequest.status === "completed" ||
+                    activeRequest.status === "cancelled"
+                      ? 12
+                      : 6,
+                }}
+              >
                 <Button
                   fullWidth
                   size="small"
                   variant="outlined"
                   color="warning"
-                  disabled={updating}
+                  disabled={
+                    updating ||
+                    activeRequest.status === "completed" ||
+                    activeRequest.status === "cancelled" ||
+                    activeRequest.status === "seeking_driver"
+                  }
                   onClick={handleDriverUnavailable}
                 >
-                  Baja Conductor (`seeking_driver`)
+                  {activeRequest.status === "inService" ||
+                  activeRequest.status === "driverArrived" ||
+                  activeRequest.status === "arrived"
+                    ? "Reportar Problema en Ruta (reportTripProblem)"
+                    : "Baja Conductor (`seeking_driver`)"}
                 </Button>
               </Grid>
-              <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  color="error"
-                  startIcon={<IconX size={15} />}
-                  disabled={updating}
-                  onClick={() => handleTransitionStatus("cancelled")}
-                >
-                  Cancelar Reserva (Liberar Techo)
-                </Button>
-              </Grid>
+              {/* CF-87 Corrección 13: Quitar cualquier botón que cancele un viaje in_progress o arrived */}
+              {activeRequest.status !== "inService" &&
+                activeRequest.status !== "arrived" &&
+                activeRequest.status !== "driverArrived" &&
+                activeRequest.status !== "completed" &&
+                activeRequest.status !== "cancelled" && (
+                  <Grid size={{ xs: 6 }}>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                      startIcon={<IconX size={15} />}
+                      disabled={updating}
+                      onClick={() => handleTransitionStatus("cancelled")}
+                    >
+                      Cancelar Reserva (Liberar Techo)
+                    </Button>
+                  </Grid>
+                )}
             </Grid>
 
             <Divider sx={{ mb: 2 }} />

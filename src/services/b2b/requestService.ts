@@ -25,6 +25,8 @@ import {
   assignDriverCallable,
   offerScheduledTripCallable,
   reassignDriverCallable,
+  reportTripProblemCallable,
+  reassignTripDriverCallable,
 } from "@/utils/functions";
 import {
   B2BRequestStatus,
@@ -338,6 +340,24 @@ export const assignB2BRequestVehicleAndDriver = async (
     );
   }
 
+  const targetRideId =
+    assignment.tripId || assignment.scheduledTripId || requestId;
+  if (typeof window !== "undefined" && targetRideId) {
+    await fetch("/api/b2b/trip-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tripId: targetRideId,
+        status: "assigned",
+        driverId: assignment.driverId,
+        driverName: assignment.driverName,
+        driverPhone: assignment.driverPhone,
+        vehicleId: assignment.vehicleId,
+        vehiclePlate: assignment.vehiclePlate,
+      }),
+    }).catch((e) => console.warn("[assignB2BRequestVehicleAndDriver] RTDB API error:", e));
+  }
+
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId || r.folio === requestId
       ? {
@@ -455,19 +475,49 @@ export const updateB2BRequestStatus = async (
       rtdbUpdates.completedAt = Date.now();
     }
 
+    const targetReq = currentFirestoreDocs.find(
+      (r) => r.id === requestId || r.folio === requestId
+    );
+    const resolvedTripId =
+      targetReq?.tripId ||
+      (targetReq as any)?.scheduledTripId ||
+      requestId;
+    const resolvedDriverId =
+      targetReq?.assignedDriverId || "ZFpZfYKfuSf0T0c04wqnBNknkiw2";
+    const resolvedClientId =
+      targetReq?.requestedByUid ||
+      targetReq?.companyId ||
+      auth.currentUser?.uid ||
+      resolvedDriverId;
+
+    // Sincronizar directamente con Realtime Database mediante el endpoint administrativo
+    if (typeof window !== "undefined") {
+      fetch("/api/b2b/trip-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tripId: resolvedTripId,
+          status,
+          driverId: resolvedDriverId,
+          clientId: resolvedClientId,
+          notes,
+        }),
+      }).catch((e) => console.warn("[updateB2BRequestStatus] RTDB API route error:", e));
+    }
+
     await Promise.allSettled([
-      updateDoc(doc(db, "scheduledTrips", requestId), scheduledUpdates),
-      updateDoc(doc(db, "trips", requestId), tripUpdates),
-      rtdbUpdate(rtdbRef(rtdb, `rideRequests/${requestId}`), rtdbUpdates),
+      updateDoc(doc(db, "scheduledTrips", resolvedTripId), scheduledUpdates),
+      updateDoc(doc(db, "trips", resolvedTripId), tripUpdates),
+      rtdbUpdate(rtdbRef(rtdb, `rideRequests/${resolvedTripId}`), rtdbUpdates),
       ...(isDriverArrived
         ? [
             httpsCallable(
               functions,
               "notifyClientDriverArrived"
             )({
-              rideId: requestId,
-              driverId: "ZFpZfYKfuSf0T0c04wqnBNknkiw2",
-              clientId: "j1OC36FPz8UvspiaSWWpRAO2Uuu1",
+              rideId: resolvedTripId,
+              driverId: resolvedDriverId,
+              clientId: resolvedClientId,
             }),
           ]
         : []),
@@ -496,7 +546,7 @@ export const cancelB2BCompanyReservation = async (
     }
   }
   await updateB2BRequestStatus(
-    requestId,
+    tripId || requestId,
     "cancelled",
     notes || "Reserva corporativa cancelada (saldo liberado del techo)."
   );
@@ -510,14 +560,35 @@ export const cancelB2BCompanyReservation = async (
 export const withdrawB2BDriverAvailability = async (
   requestId: string,
   tripId?: string,
-  driverId?: string
+  driverId?: string,
+  reason?: string
 ): Promise<void> => {
   if (tripId) {
     try {
-      await markDriverUnavailableCallable({ tripId, driverId });
+      if (reason?.trim()) {
+        await reportTripProblemCallable({
+          tripId,
+          reason: reason.trim(),
+        });
+      } else {
+        await markDriverUnavailableCallable({ tripId, driverId });
+      }
     } catch (err) {
-      console.warn("[requestService] markDriverUnavailableCallable fallback:", err);
+      console.warn("[requestService] reportTripProblem/markDriverUnavailable fallback:", err);
     }
+  }
+
+  if (typeof window !== "undefined") {
+    fetch("/api/b2b/trip-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tripId: tripId || requestId,
+        status: "seeking_driver",
+        driverId,
+        notes: reason || "Incidencia reportada en ruta",
+      }),
+    }).catch((e) => console.warn("[withdrawB2BDriverAvailability] RTDB API error:", e));
   }
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
@@ -533,6 +604,7 @@ export const withdrawB2BDriverAvailability = async (
         }
       : r
   );
+  notifyRequestSubscribers();
 
   try {
     const docRef = doc(db, REQUESTS_COLLECTION, requestId);
@@ -543,6 +615,160 @@ export const withdrawB2BDriverAvailability = async (
       assignedVehicleId: null,
       assignedVehiclePlate: null,
       status: "seeking_driver",
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Actualizado en memoria
+  }
+};
+
+/**
+ * CF-87: Reporta un problema en un viaje en curso (reportTripProblem callable),
+ * transicionando el viaje a `seeking_driver` sin cancelar la reserva ni tocar el techo.
+ */
+export const reportB2BTripProblem = async (
+  requestId: string,
+  tripId: string,
+  reason: string,
+  coords?: { latitude?: number; longitude?: number },
+  previousDriverId?: string
+): Promise<void> => {
+  const cleanReason = reason.trim();
+  if (!cleanReason || cleanReason.length > 500) {
+    throw new Error("El motivo del reporte es obligatorio (1 a 500 caracteres).");
+  }
+
+  try {
+    await reportTripProblemCallable({
+      tripId,
+      reason: cleanReason,
+      ...(typeof coords?.latitude === "number" ? { latitude: coords.latitude } : {}),
+      ...(typeof coords?.longitude === "number" ? { longitude: coords.longitude } : {}),
+    });
+  } catch (err) {
+    console.warn("[requestService] reportTripProblemCallable note:", err);
+  }
+
+  if (typeof window !== "undefined") {
+    await fetch("/api/b2b/trip-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tripId,
+        status: "seeking_driver",
+        driverId: previousDriverId,
+        notes: cleanReason,
+      }),
+    }).catch((e) => console.warn("[reportB2BTripProblem] RTDB API error:", e));
+  }
+
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
+    r.id === requestId || r.tripId === tripId
+      ? {
+          ...r,
+          assignedDriverId: undefined,
+          assignedDriverName: undefined,
+          assignedDriverPhone: undefined,
+          assignedVehicleId: undefined,
+          assignedVehiclePlate: undefined,
+          status: "seeking_driver",
+          notes: cleanReason,
+        }
+      : r
+  );
+  notifyRequestSubscribers();
+
+  try {
+    const docRef = doc(db, REQUESTS_COLLECTION, requestId);
+    await updateDoc(docRef, {
+      assignedDriverId: null,
+      assignedDriverName: null,
+      assignedDriverPhone: null,
+      assignedVehicleId: null,
+      assignedVehiclePlate: null,
+      status: "seeking_driver",
+      notes: cleanReason,
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Actualizado en memoria
+  }
+};
+
+/**
+ * CF-87: Reasigna un nuevo conductor a un viaje reportado en `seeking_driver`
+ * mediante `reassignTripDriverCallable`, devolviendo el viaje a `in_progress` (`inService`).
+ */
+export const reassignB2BTripDriver = async (
+  requestId: string,
+  assignment: {
+    tripId: string;
+    driverId: string;
+    driverName: string;
+    driverPhone: string;
+    vehicleId: string;
+    vehiclePlate: string;
+    reason: string;
+  }
+): Promise<void> => {
+  const cleanReason = assignment.reason.trim();
+  if (!cleanReason || cleanReason.length > 500) {
+    throw new Error("El motivo de reasignación es obligatorio (1 a 500 caracteres).");
+  }
+
+  try {
+    await reassignTripDriverCallable({
+      tripId: assignment.tripId,
+      driverId: assignment.driverId,
+      reason: cleanReason,
+    });
+  } catch (err) {
+    console.warn("[requestService] reassignTripDriverCallable note:", err);
+  }
+
+  if (typeof window !== "undefined") {
+    await fetch("/api/b2b/trip-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tripId: assignment.tripId,
+        status: "inService",
+        driverId: assignment.driverId,
+        driverName: assignment.driverName,
+        driverPhone: assignment.driverPhone,
+        vehicleId: assignment.vehicleId,
+        vehiclePlate: assignment.vehiclePlate,
+        notes: cleanReason,
+      }),
+    }).catch((e) => console.warn("[reassignB2BTripDriver] RTDB API error:", e));
+  }
+
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
+    r.id === requestId || r.tripId === assignment.tripId
+      ? {
+          ...r,
+          assignedDriverId: assignment.driverId,
+          assignedDriverName: assignment.driverName,
+          assignedDriverPhone: assignment.driverPhone,
+          assignedVehicleId: assignment.vehicleId,
+          assignedVehiclePlate: assignment.vehiclePlate,
+          status: "inService",
+          notes: cleanReason,
+        }
+      : r
+  );
+  notifyRequestSubscribers();
+
+  try {
+    const docRef = doc(db, REQUESTS_COLLECTION, requestId);
+    await updateDoc(docRef, {
+      assignedDriverId: assignment.driverId,
+      assignedDriverName: assignment.driverName,
+      assignedDriverPhone: assignment.driverPhone,
+      assignedVehicleId: assignment.vehicleId,
+      assignedVehiclePlate: assignment.vehiclePlate,
+      status: "inService",
+      notes: cleanReason,
       updatedAt: serverTimestamp(),
     });
   } catch {

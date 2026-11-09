@@ -51,6 +51,8 @@ import {
   LILO_COMMISSION_RATE,
 } from "@/utils/b2bPricing";
 import { useLanguage } from "@/contexts/LanguageContext";
+import toast from "react-hot-toast";
+import { formatFriendlyError } from "@/utils/friendlyError";
 
 const CATEGORY_CONFIG: Record<
   VehicleCategory,
@@ -158,14 +160,15 @@ const B2BFlotaInventoryPage = () => {
     setSavingStatus(true);
     try {
       await updateB2BVehicle(selectedVehicle.id, { status: statusDraft });
+      toast.success("Estado de la unidad actualizado correctamente.");
       setSelectedVehicle(null);
     } catch (err: any) {
-      setError(
-        err.message ||
-          (isEn
-            ? "Could not update inventory status."
-            : "No se pudo actualizar el estado en inventario.")
+      const msg = formatFriendlyError(
+        err,
+        "No se pudo actualizar el estado del vehículo en este momento."
       );
+      setError(msg);
+      toast.error(msg);
     } finally {
       setSavingStatus(false);
     }

@@ -62,6 +62,7 @@ import {
 import StatusBadge from "../_components/StatusBadge";
 import CompanyForm from "../_components/CompanyForm";
 import toast from "react-hot-toast";
+import { formatFriendlyError } from "@/utils/friendlyError";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function EmpresasPage() {
@@ -98,7 +99,7 @@ export default function EmpresasPage() {
       (err) => {
         console.error("[EmpresasPage] Error suscribiéndose a empresas:", err);
         setLoading(false);
-        toast.error("Error al cargar empresas: " + (err.message || ""));
+        toast.error(formatFriendlyError(err, "No pudimos cargar el listado de empresas."));
       }
     );
     return () => unsubscribe();
@@ -134,10 +135,12 @@ export default function EmpresasPage() {
         minimumBookingLeadMinutes: Number(capLeadMinutes) || 180,
         reason: capReason.trim() || undefined,
       });
-      toast.success("Capacidades actualizadas exitosamente (CF-74)");
+      toast.success("Configuración operativa de la empresa actualizada con éxito.");
       setCapModalOpen(false);
     } catch (err: any) {
-      toast.error("Error al actualizar capacidades: " + (err?.message || ""));
+      toast.error(
+        formatFriendlyError(err, "No se pudo actualizar la configuración de la empresa.")
+      );
     } finally {
       setSavingCap(false);
     }
@@ -150,7 +153,7 @@ export default function EmpresasPage() {
       const res = await listCostCentreRequestsCallable({ countryId: "sv", status: "pending" });
       setCostCentreRequests(res.data?.requests || []);
     } catch (err: any) {
-      toast.error("Error al cargar solicitudes: " + (err?.message || ""));
+      toast.error(formatFriendlyError(err, "No se pudieron cargar las solicitudes pendientes."));
     } finally {
       setLoadingRequests(false);
     }
@@ -163,17 +166,17 @@ export default function EmpresasPage() {
         companyId: req.companyId,
         decision: "approved",
       });
-      toast.success("Solicitud aprobada y centro de costo creado (CF-84)");
+      toast.success("Solicitud aprobada y nuevo centro de costo habilitado.");
       handleOpenRequests();
     } catch (err: any) {
-      toast.error("Error al aprobar solicitud: " + (err?.message || ""));
+      toast.error(formatFriendlyError(err, "No se pudo aprobar la solicitud."));
     }
   };
 
   const handleRejectRequest = async () => {
     if (!selectedReqForReject) return;
     if (!rejectionReason.trim()) {
-      toast.error("El motivo de rechazo es obligatorio");
+      toast.error("Por favor ingresa el motivo del rechazo.");
       return;
     }
     try {
@@ -183,13 +186,13 @@ export default function EmpresasPage() {
         decision: "rejected",
         rejectionReason: rejectionReason.trim(),
       });
-      toast.success("Solicitud rechazada exitosamente (CF-84)");
+      toast.success("La solicitud de centro de costo fue rechazada.");
       setRejectModalOpen(false);
       setSelectedReqForReject(null);
       setRejectionReason("");
       handleOpenRequests();
     } catch (err: any) {
-      toast.error("Error al rechazar solicitud: " + (err?.message || ""));
+      toast.error(formatFriendlyError(err, "No se pudo rechazar la solicitud."));
     }
   };
 
@@ -199,14 +202,14 @@ export default function EmpresasPage() {
     try {
       if (selectedCompany) {
         await updateB2BCompany(selectedCompany.id, data);
-        toast.success("Empresa actualizada exitosamente vía updateCompany");
+        toast.success("Datos de la empresa actualizados correctamente.");
       } else {
         await createB2BCompany(data);
-        toast.success("Empresa B2B creada exitosamente. Se envió correo al administrador para /establecer-clave (D-22)");
+        toast.success("Empresa registrada con éxito. Se envió el correo de activación al administrador.");
       }
       setOpenModal(false);
     } catch (err: any) {
-      toast.error("Error al guardar empresa: " + (err.message || ""));
+      toast.error(formatFriendlyError(err, "No fue posible guardar los datos de la empresa."));
       throw err;
     }
   };

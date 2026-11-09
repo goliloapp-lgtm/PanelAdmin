@@ -16,10 +16,12 @@ export interface AddressSelection {
   lng: number;
   placeId?: string;
   name?: string;
+  isVerified?: boolean;
 }
 
 interface Props {
   value: string;
+  isVerified?: boolean;
   placeholder?: string;
   label?: string;
   required?: boolean;
@@ -31,6 +33,7 @@ interface Props {
 
 export default function GoogleAddressAutocomplete({
   value,
+  isVerified,
   placeholder = "Buscar dirección o punto de referencia en El Salvador...",
   label,
   required = false,
@@ -41,12 +44,24 @@ export default function GoogleAddressAutocomplete({
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
   const [inputValue, setInputValue] = useState(value || "");
+  const [confirmed, setConfirmed] = useState<boolean>(
+    isVerified !== undefined ? isVerified : Boolean(value && value.trim())
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     setInputValue(value || "");
   }, [value]);
+
+  useEffect(() => {
+    if (isVerified !== undefined) {
+      setConfirmed(isVerified);
+    }
+  }, [isVerified]);
 
   useEffect(() => {
     let active = true;
@@ -74,12 +89,14 @@ export default function GoogleAddressAutocomplete({
           const lng = place.geometry.location.lng();
 
           setInputValue(selectedAddress);
-          onChange({
+          setConfirmed(true);
+          onChangeRef.current({
             address: selectedAddress,
             lat,
             lng,
             placeId: place.place_id,
             name: place.name,
+            isVerified: true,
           });
         });
 
@@ -98,39 +115,59 @@ export default function GoogleAddressAutocomplete({
         google.maps.event.clearInstanceListeners(autocompleteRef.current);
       }
     };
-  }, [onChange]);
+  }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newVal = e.target.value;
     setInputValue(newVal);
-    onChange({
+    setConfirmed(false);
+    onChangeRef.current({
       address: newVal,
-      lat: 13.6929,
-      lng: -89.2182,
+      lat: 0,
+      lng: 0,
+      isVerified: false,
     });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const handleClear = () => {
     setInputValue("");
+    setConfirmed(false);
     if (inputRef.current) inputRef.current.value = "";
-    onChange({
+    onChangeRef.current({
       address: "",
-      lat: 13.6929,
-      lng: -89.2182,
+      lat: 0,
+      lng: 0,
+      isVerified: false,
     });
   };
+
+  const showUnverifiedWarning = Boolean(inputValue.trim().length > 0 && !confirmed);
 
   return (
     <TextField
       inputRef={inputRef}
       value={inputValue}
       onChange={handleInputChange}
+      onKeyDown={handleKeyDown}
       label={label}
       placeholder={placeholder}
       required={required}
       disabled={disabled}
       fullWidth={fullWidth}
       size={size}
+      color={showUnverifiedWarning ? "warning" : "primary"}
+      helperText={
+        showUnverifiedWarning
+          ? "Selecciona una sugerencia de la lista desplegable de Google Maps para validar la dirección."
+          : undefined
+      }
       InputProps={{
         startAdornment: (
           <InputAdornment position="start">

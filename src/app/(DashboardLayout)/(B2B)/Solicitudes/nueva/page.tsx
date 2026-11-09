@@ -65,6 +65,8 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { getFareQuoteCallable, FareQuote } from "@/utils/functions";
 import GoogleAddressAutocomplete from "../../_components/GoogleAddressAutocomplete";
 import GoogleRouteMap from "../../_components/GoogleRouteMap";
+import toast from "react-hot-toast";
+import { formatFriendlyError } from "@/utils/friendlyError";
 
 const NuevaSolicitudB2BPage = () => {
   const router = useRouter();
@@ -73,7 +75,17 @@ const NuevaSolicitudB2BPage = () => {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [travellers, setTravellers] = useState<B2BTraveller[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setErrorState] = useState<string | null>(null);
+
+  const setError = (msg: string | null) => {
+    if (!msg) {
+      setErrorState(null);
+      return;
+    }
+    const clean = formatFriendlyError(msg);
+    setErrorState(clean);
+    toast.error(clean);
+  };
 
   // Backend quote state (getFareQuote callable)
   const [backendQuote, setBackendQuote] = useState<FareQuote | null>(null);
@@ -98,7 +110,7 @@ const NuevaSolicitudB2BPage = () => {
   const [minAdvanceHours, setMinAdvanceHours] = useState<number>(3);
   const [isImmediate, setIsImmediate] = useState(false); // Inmediatos inhabilitados por política comercial El Salvador
   const [scheduledDateTime, setScheduledDateTime] = useState(() => {
-    const d = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const d = new Date(Date.now() + 3 * 60 * 60 * 1000 + 15 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   });
@@ -109,10 +121,12 @@ const NuevaSolicitudB2BPage = () => {
     lat: number;
     lng: number;
     address: string;
+    isVerified?: boolean;
   }>({
     lat: EL_SALVADOR_LOCATIONS[0].lat,
     lng: EL_SALVADOR_LOCATIONS[0].lng,
     address: EL_SALVADOR_LOCATIONS[0].address,
+    isVerified: true,
   });
 
   const [destinationIndex, setDestinationIndex] = useState<number>(7);
@@ -120,14 +134,22 @@ const NuevaSolicitudB2BPage = () => {
     lat: number;
     lng: number;
     address: string;
+    isVerified?: boolean;
   }>({
     lat: EL_SALVADOR_LOCATIONS[7].lat,
     lng: EL_SALVADOR_LOCATIONS[7].lng,
     address: EL_SALVADOR_LOCATIONS[7].address,
+    isVerified: true,
   });
 
   const [stops, setStops] = useState<
-    Array<{ presetIndex: number; address: string; lat: number; lng: number }>
+    Array<{
+      presetIndex: number;
+      address: string;
+      lat: number;
+      lng: number;
+      isVerified?: boolean;
+    }>
   >([]);
 
   const [googleDistanceKm, setGoogleDistanceKm] = useState<number | null>(null);
@@ -192,12 +214,13 @@ const NuevaSolicitudB2BPage = () => {
 
   // Calcular distancia automática entre Origen -> Paradas -> Destino
   const autoOneWayDistanceKm = useMemo(() => {
+    if (!originCoord.lat || !destinationCoord.lat) return 0;
     if (googleDistanceKm && googleDistanceKm > 0) {
       return roundTrip ? Number((googleDistanceKm / 2).toFixed(1)) : googleDistanceKm;
     }
     const points = [
       { lat: originCoord.lat, lng: originCoord.lng },
-      ...stops.map((st) => ({ lat: st.lat, lng: st.lng })),
+      ...stops.filter((st) => st.lat && st.lng).map((st) => ({ lat: st.lat, lng: st.lng })),
       { lat: destinationCoord.lat, lng: destinationCoord.lng },
     ];
 
@@ -270,6 +293,7 @@ const NuevaSolicitudB2BPage = () => {
         address: EL_SALVADOR_LOCATIONS[defaultStopIdx].address,
         lat: EL_SALVADOR_LOCATIONS[defaultStopIdx].lat,
         lng: EL_SALVADOR_LOCATIONS[defaultStopIdx].lng,
+        isVerified: true,
       },
     ]);
   };
@@ -288,16 +312,21 @@ const NuevaSolicitudB2BPage = () => {
       );
       return;
     }
+    let effectiveScheduledIso = new Date(scheduledDateTime).toISOString();
     if (!isImmediate) {
       const scheduledMs = new Date(scheduledDateTime).getTime();
-      const minRequiredMs = Date.now() + minAdvanceHours * 60 * 60 * 1000 - 60000;
-      if (isNaN(scheduledMs) || scheduledMs < minRequiredMs) {
+      const strictMinMs = Date.now() + minAdvanceHours * 60 * 60 * 1000 + 2 * 60 * 1000;
+      const graceWindowMs = Date.now() + (minAdvanceHours * 60 - 20) * 60 * 1000;
+      if (isNaN(scheduledMs) || scheduledMs < graceWindowMs) {
         setError(
-          isEn
-            ? `Scheduled reservations must be booked at least ${minAdvanceHours} hours in advance.`
-            : `Las reservas de viaje programadas deben tener al menos ${minAdvanceHours} horas de anticipación.`
+          `Las reservas de viaje programadas deben tener al menos ${minAdvanceHours} horas de anticipación.`
         );
         return;
+      }
+      if (scheduledMs < strictMinMs) {
+        effectiveScheduledIso = new Date(
+          Date.now() + (minAdvanceHours * 60 + 5) * 60 * 1000
+        ).toISOString();
       }
     }
     if (!selectedCompany) {
@@ -316,8 +345,35 @@ const NuevaSolicitudB2BPage = () => {
       setError("El motivo de la operación no debe exceder los 500 caracteres.");
       return;
     }
-    if (!originCoord.address.trim() || !destinationCoord.address.trim()) {
-      setError("Ingresa la dirección de origen y destino.");
+    if (
+      !originCoord.address.trim() ||
+      originCoord.isVerified === false ||
+      !originCoord.lat ||
+      !originCoord.lng
+    ) {
+      setError(
+        "Por favor selecciona una dirección real de la lista desplegable de Google Maps para el Punto de Origen."
+      );
+      return;
+    }
+    if (
+      !destinationCoord.address.trim() ||
+      destinationCoord.isVerified === false ||
+      !destinationCoord.lat ||
+      !destinationCoord.lng
+    ) {
+      setError(
+        "Por favor selecciona una dirección real de la lista desplegable de Google Maps para el Punto de Destino."
+      );
+      return;
+    }
+    const unverifiedStop = stops.find(
+      (s) => !s.address.trim() || s.isVerified === false || !s.lat || !s.lng
+    );
+    if (unverifiedStop) {
+      setError(
+        "Por favor selecciona una dirección real de la lista desplegable de Google Maps para todas las paradas intermedias."
+      );
       return;
     }
 
@@ -392,7 +448,7 @@ const NuevaSolicitudB2BPage = () => {
         legs,
         scheduledAt: isImmediate
           ? new Date().toISOString()
-          : new Date(scheduledDateTime).toISOString(),
+          : effectiveScheduledIso,
         isImmediate,
         estimatedDistanceKm: backendQuote ? backendQuote.chargedDistance : tariffBreakdown.billableDistanceKm,
         estimatedDurationMinutes: tariffBreakdown.estimatedDurationMinutes,
@@ -409,9 +465,15 @@ const NuevaSolicitudB2BPage = () => {
         reason: platformReason.trim(),
       });
 
+      toast.success("¡Solicitud de traslado corporativo registrada con éxito!");
       router.push("/Solicitudes");
     } catch (err: any) {
-      setError(err.message || "Error al crear la solicitud de traslado.");
+      setError(
+        formatFriendlyError(
+          err,
+          "No fue posible registrar la solicitud de traslado. Por favor intenta nuevamente."
+        )
+      );
     } finally {
       setSubmitting(false);
     }
@@ -595,12 +657,14 @@ const NuevaSolicitudB2BPage = () => {
                     <GoogleAddressAutocomplete
                       placeholder="Buscar dirección o punto de interés (ej. WTC, Sheraton, Hilton, Calle El Mirador...)"
                       value={originCoord.address}
+                      isVerified={originCoord.isVerified}
                       required
                       onChange={(sel) => {
                         setOriginCoord({
                           address: sel.address,
                           lat: sel.lat,
                           lng: sel.lng,
+                          isVerified: Boolean(sel.isVerified),
                         });
                       }}
                     />
@@ -662,6 +726,7 @@ const NuevaSolicitudB2BPage = () => {
                                             address: loc.address,
                                             lat: loc.lat,
                                             lng: loc.lng,
+                                            isVerified: true,
                                           }
                                         : item
                                     )
@@ -694,6 +759,7 @@ const NuevaSolicitudB2BPage = () => {
                       <GoogleAddressAutocomplete
                         placeholder="Buscar punto intermedio en El Salvador..."
                         value={stop.address}
+                        isVerified={stop.isVerified}
                         onChange={(sel) => {
                           setStops((prev) =>
                             prev.map((item, i) =>
@@ -703,6 +769,7 @@ const NuevaSolicitudB2BPage = () => {
                                     address: sel.address,
                                     lat: sel.lat,
                                     lng: sel.lng,
+                                    isVerified: Boolean(sel.isVerified),
                                   }
                                 : item
                             )
@@ -722,12 +789,14 @@ const NuevaSolicitudB2BPage = () => {
                     <GoogleAddressAutocomplete
                       placeholder="Buscar destino en El Salvador (ej. Aeropuerto Comalapa, Zona Franca, Hotel...)"
                       value={destinationCoord.address}
+                      isVerified={destinationCoord.isVerified}
                       required
                       onChange={(sel) => {
                         setDestinationCoord({
                           address: sel.address,
                           lat: sel.lat,
                           lng: sel.lng,
+                          isVerified: Boolean(sel.isVerified),
                         });
                       }}
                     />
@@ -750,7 +819,7 @@ const NuevaSolicitudB2BPage = () => {
                         <IconMapPin size={15} color="#5D87FF" />
                         Ruta Vial en Tiempo Real (Google Maps Directions API)
                       </Typography>
-                      {googleDistanceKm !== null && (
+                      {googleDistanceKm !== null && googleDistanceKm > 0 && (
                         <Typography variant="caption" fontWeight={700} color="success.main">
                           Calculado por Google Maps
                         </Typography>
@@ -763,8 +832,8 @@ const NuevaSolicitudB2BPage = () => {
                       roundTrip={roundTrip}
                       height={260}
                       onRouteCalculated={({ distanceKm, durationMinutes }) => {
-                        setGoogleDistanceKm(distanceKm);
-                        setGoogleDurationMinutes(durationMinutes);
+                        setGoogleDistanceKm(distanceKm > 0 ? distanceKm : null);
+                        setGoogleDurationMinutes(durationMinutes > 0 ? durationMinutes : null);
                       }}
                     />
                   </Box>

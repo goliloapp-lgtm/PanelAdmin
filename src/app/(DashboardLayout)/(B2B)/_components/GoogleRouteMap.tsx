@@ -37,6 +37,8 @@ export default function GoogleRouteMap({
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const directionsRendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+  const onRouteCalculatedRef = useRef(onRouteCalculated);
+  onRouteCalculatedRef.current = onRouteCalculated;
 
   const [loadingMap, setLoadingMap] = useState(true);
   const [calculatingRoute, setCalculatingRoute] = useState(false);
@@ -104,6 +106,14 @@ export default function GoogleRouteMap({
     }
 
     if (!origin?.lat || !destination?.lat) {
+      directionsRendererRef.current?.set("directions", null);
+      setLiveDistanceKm(null);
+      setLiveDurationMin(null);
+      onRouteCalculatedRef.current?.({
+        distanceKm: 0,
+        durationMinutes: 0,
+        directionsResult: null as any,
+      });
       return;
     }
 
@@ -153,8 +163,8 @@ export default function GoogleRouteMap({
           setLiveDistanceKm(km);
           setLiveDurationMin(min);
 
-          if (onRouteCalculated) {
-            onRouteCalculated({
+          if (onRouteCalculatedRef.current) {
+            onRouteCalculatedRef.current({
               distanceKm: km,
               durationMinutes: min,
               directionsResult: result,
@@ -174,7 +184,6 @@ export default function GoogleRouteMap({
     destination.lng,
     stops,
     roundTrip,
-    onRouteCalculated,
   ]);
 
   return (
