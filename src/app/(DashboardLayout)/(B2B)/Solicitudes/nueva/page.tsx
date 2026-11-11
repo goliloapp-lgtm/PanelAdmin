@@ -314,18 +314,17 @@ const NuevaSolicitudB2BPage = () => {
     }
     let effectiveScheduledIso = new Date(scheduledDateTime).toISOString();
     if (!isImmediate) {
+      const nowMs = Date.now();
       const scheduledMs = new Date(scheduledDateTime).getTime();
-      const strictMinMs = Date.now() + minAdvanceHours * 60 * 60 * 1000 + 2 * 60 * 1000;
-      const graceWindowMs = Date.now() + (minAdvanceHours * 60 - 20) * 60 * 1000;
-      if (isNaN(scheduledMs) || scheduledMs < graceWindowMs) {
-        setError(
-          `Las reservas de viaje programadas deben tener al menos ${minAdvanceHours} horas de anticipación.`
-        );
+      const requiredLeadMs = minAdvanceHours * 60 * 60 * 1000;
+      if (isNaN(scheduledMs) || scheduledMs < nowMs) {
+        setError("La fecha y hora de salida de la reserva debe estar en el futuro.");
         return;
       }
-      if (scheduledMs < strictMinMs) {
+      // Asegurar que la hora programada cumpla la anticipación mínima de la empresa con margen de seguridad
+      if (scheduledMs - nowMs < requiredLeadMs) {
         effectiveScheduledIso = new Date(
-          Date.now() + (minAdvanceHours * 60 + 5) * 60 * 1000
+          nowMs + (minAdvanceHours * 60 + 10) * 60 * 1000
         ).toISOString();
       }
     }
@@ -333,8 +332,29 @@ const NuevaSolicitudB2BPage = () => {
       setError("Selecciona una empresa corporativa B2B.");
       return;
     }
+    if (travellers.length === 0) {
+      setError(
+        "La empresa seleccionada no tiene viajeros corporativos registrados. Registra un viajero en el catálogo de la empresa antes de solicitar un traslado."
+      );
+      return;
+    }
     if (!selectedTraveller || !travellerId) {
       setError("Debes seleccionar un viajero registrado para la empresa.");
+      return;
+    }
+    if (
+      costCenters.length > 1 &&
+      (!costCenterId || !costCenters.some((c) => c.id === costCenterId))
+    ) {
+      setError(
+        "La empresa tiene múltiples centros de costo. Debes seleccionar uno específico de la lista."
+      );
+      return;
+    }
+    if (!effectiveOneWayKm || effectiveOneWayKm <= 0 || isNaN(effectiveOneWayKm)) {
+      setError(
+        "La distancia de la ruta debe ser mayor a 0 km. Por favor verifica los puntos de origen y destino o ingresa una distancia manual."
+      );
       return;
     }
     if (!isImmediate && !platformReason.trim()) {
@@ -420,11 +440,13 @@ const NuevaSolicitudB2BPage = () => {
           ]
         : [{ distance: effectiveOneWayKm, durationMinutes: oneWayDuration }];
 
-      const effectiveCostCenter = selectedCostCenter || (costCenters.length > 0 ? costCenters[0] : null);
+      const effectiveCostCenter =
+        selectedCostCenter || (costCenters.length === 1 ? costCenters[0] : null);
       const effectiveCostCenterId =
-        effectiveCostCenter?.id || (effectiveCostCenter as any)?.costCentreId || costCenterId || "general";
+        effectiveCostCenter?.id ||
+        (costCenterId && costCenterId !== "general" ? costCenterId : undefined);
       const effectiveCostCenterName =
-        effectiveCostCenter?.name || effectiveCostCenter?.department || "General";
+        effectiveCostCenter?.name || effectiveCostCenter?.department || "General Corporativo";
 
       await createB2BServiceRequest({
         companyId: selectedCompany.id,
@@ -468,10 +490,14 @@ const NuevaSolicitudB2BPage = () => {
       toast.success("¡Solicitud de traslado corporativo registrada con éxito!");
       router.push("/Solicitudes");
     } catch (err: any) {
+      console.error("[Solicitudes/nueva] error al registrar:", err, err?.message, err?.details);
+      const serverMsg = err?.details?.message || err?.message || "";
       setError(
         formatFriendlyError(
           err,
-          "No fue posible registrar la solicitud de traslado. Por favor intenta nuevamente."
+          serverMsg
+            ? `No fue posible registrar la solicitud: ${serverMsg}`
+            : "No fue posible registrar la solicitud de traslado. Por favor intenta nuevamente."
         )
       );
     } finally {
@@ -549,6 +575,11 @@ const NuevaSolicitudB2BPage = () => {
                       label="Techo de Consumo / Centro de Costo *"
                       value={costCenterId}
                       onChange={(e) => setCostCenterId(e.target.value)}
+                      helperText={
+                        costCenters.length === 0
+                          ? "Sin centros de costo registrados (se resolverá automáticamente en servidor)"
+                          : undefined
+                      }
                     >
                       {costCenters.length === 0 ? (
                         <MenuItem value="">General Corporativo</MenuItem>
@@ -584,10 +615,20 @@ const NuevaSolicitudB2BPage = () => {
                           setPassengerNamesInput(found.name);
                         }
                       }}
-                      error={!travellerId && travellers.length > 0}
-                      helperText={!travellerId ? "Selección obligatoria de viajero registrado" : undefined}
+                      error={!travellerId || travellers.length === 0}
+                      helperText={
+                        travellers.length === 0
+                          ? "Esta empresa no tiene viajeros registrados en el catálogo"
+                          : !travellerId
+                          ? "Selección obligatoria de viajero registrado"
+                          : undefined
+                      }
                     >
-                      <MenuItem value="" disabled>-- Selecciona un viajero corporativo * --</MenuItem>
+                      <MenuItem value="" disabled>
+                        {travellers.length === 0
+                          ? "-- Sin viajeros registrados para esta empresa --"
+                          : "-- Selecciona un viajero corporativo * --"}
+                      </MenuItem>
                       {travellers.map((t) => (
                         <MenuItem key={t.id} value={t.id}>
                           {t.name} ({t.department || t.employeeCode || "Corporativo"})

@@ -227,29 +227,51 @@ export const createB2BServiceRequest = async (
       );
     }
 
-    // CF-86: Invocar el callable oficial de plataforma para reservas en nombre de la empresa
-    const schedRes = await createScheduledTripForCompanyCallable({
-      countryId: "sv",
-      companyId: data.companyId,
-      costCentreId: data.costCenterId || undefined,
-      scheduledPickupAt: scheduledPickupAtIso,
-      passengerCount: data.passengersCount,
-      originAddress: data.origin.address,
-      originLatitude: data.origin.lat,
-      originLongitude: data.origin.lng,
-      destinationAddress: data.destination.address,
-      destinationLatitude: data.destination.lat,
-      destinationLongitude: data.destination.lng,
-      legs,
-      rideTimeMinutes: estDuration,
-      etaMinutes: estDuration,
-      paymentMethod: "company_account",
-      travellerId: data.travellerId,
-      reason,
-    });
+    const cleanCostCentreId =
+      data.costCenterId && data.costCenterId !== "general"
+        ? String(data.costCenterId).trim()
+        : undefined;
 
-    tripId = schedRes.data.scheduledTripId;
-    folio = schedRes.data.folio;
+    const sanitizedLegs = legs.map((leg) => ({
+      distance: Math.max(0.1, Number(Number(leg.distance).toFixed(2))),
+      durationMinutes: Math.max(1, Math.round(Number(leg.durationMinutes) || 10)),
+    }));
+    const sanitizedDuration = Math.max(1, Math.round(Number(estDuration) || 15));
+    const passengerCount = Math.max(1, Math.round(Number(data.passengersCount) || 1));
+
+    // CF-86: Invocar el callable oficial de plataforma para reservas en nombre de la empresa
+    try {
+      const schedRes = await createScheduledTripForCompanyCallable({
+        countryId: "sv",
+        companyId: data.companyId,
+        costCentreId: cleanCostCentreId,
+        scheduledPickupAt: scheduledPickupAtIso,
+        passengerCount,
+        originAddress: data.origin.address,
+        originLatitude: data.origin.lat,
+        originLongitude: data.origin.lng,
+        destinationAddress: data.destination.address,
+        destinationLatitude: data.destination.lat,
+        destinationLongitude: data.destination.lng,
+        legs: sanitizedLegs,
+        rideTimeMinutes: sanitizedDuration,
+        etaMinutes: sanitizedDuration,
+        paymentMethod: "company_account",
+        travellerId: data.travellerId,
+        reason,
+      });
+
+      tripId = schedRes.data.scheduledTripId;
+      folio = schedRes.data.folio;
+    } catch (schedErr: any) {
+      console.error(
+        "[requestService] createScheduledTripForCompany error:",
+        schedErr,
+        schedErr?.message,
+        schedErr?.details
+      );
+      throw schedErr;
+    }
   } else {
     // Invoke backend callable `createTrip` for immediate requests
     const categoryId =

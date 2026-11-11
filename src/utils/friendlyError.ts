@@ -78,6 +78,17 @@ export function formatFriendlyError(
     return "Por favor selecciona un pasajero corporativo activo de la empresa.";
   }
 
+  // 6b. Flota vehicular y distancia de ruta
+  if (combined.includes("no active vehicle") || combined.includes("load fleet first")) {
+    return "No hay vehículos activos registrados en la flota de El Salvador para atender este traslado corporativo.";
+  }
+  if (combined.includes("summed distance") || combined.includes("not above zero") || combined.includes("zero-distance")) {
+    return "La distancia total de la ruta debe ser mayor a 0 km. Por favor verifica las coordenadas de origen y destino.";
+  }
+  if (combined.includes("do not fit in any vehicle")) {
+    return "La cantidad de pasajeros seleccionada excede la capacidad de la flota vehicular disponible en El Salvador.";
+  }
+
   // 7. Tarifas y categorías vehiculares (distinguiendo formato/categoría/tasa de alta B2B vs cotización)
   if (
     combined.includes("object keyed by categoryid") ||
@@ -207,6 +218,14 @@ export function formatFriendlyError(
 
   if (!looksTechnicalOrEnglish && cleanedSpanish.length > 4) {
     return cleanedSpanish;
+  }
+
+  if (rawMessage && rawMessage.length > 5) {
+    const compact = rawMessage
+      .replace(/Nothing was written\.?/gi, "")
+      .replace(/Firebase:\s*Error\s*\([^)]+\)\.?/gi, "")
+      .trim();
+    return `${fallbackMessage}: ${compact}`;
   }
 
   return fallbackMessage;
