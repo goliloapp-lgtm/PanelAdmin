@@ -1,16 +1,65 @@
 {
   "rules": {
-    ".read": false,
-    ".write": false,
-    "rideRequests": {
-      ".read": "auth != null",
-      ".write": "auth != null"
-    },
     "conductores_activos": {
       ".read": "auth != null",
-      "$driverId": {
-        ".write": "auth != null && (auth.uid == $driverId || true)"
+      "$conductorId": {
+        ".write": "auth != null && auth.uid === $conductorId",
+        "lat": {
+          ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90"
+        },
+        "lng": {
+          ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180"
+        },
+        "bearing": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 360"
+        },
+        "timestamp": {
+          ".validate": "newData.isNumber()"
+        },
+        "updatedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "lastStatusUpdate": {
+          ".validate": "newData.isNumber()"
+        },
+        "status": {
+          ".validate": "newData.isString() && (newData.val() === 'disponible' || newData.val() === 'ocupado' || newData.val() === 'on_trip')"
+        },
+        "isActive": {
+          ".validate": "newData.isBoolean()"
+        },
+        "driverId": {
+          ".validate": "newData.val() === $conductorId"
+        }
       }
+    },
+    "driverNotifications": {
+      "$driverId": {
+        ".read": "auth != null && auth.uid === $driverId",
+        ".write": false,
+        "$notificationId": {
+          ".validate": "newData.hasChildren(['type', 'rideId', 'createdAt']) && newData.child('type').isString() && newData.child('rideId').isString() && (newData.child('read').val() === false || newData.child('read').val() === true || !newData.child('read').exists())"
+        }
+      }
+    },
+    "rideRequests": {
+      ".indexOn": ["status", "companyId", "driverId"],
+      "$rideId": {
+        ".read": "auth != null && (data.child('userId').val() === auth.uid || data.child('driverId').val() === auth.uid || auth.token.admin === true || auth.token.superAdmin === true || (auth.token.companyId != null && data.child('companyId').val() === auth.token.companyId))",
+        ".write": false
+      }
+    },
+    "tripStatusFeed": {
+      ".indexOn": ["companyId", "driverId", "updatedAt"],
+      ".read": "auth != null && (auth.token.admin === true || auth.token.superAdmin === true || auth.token.supportRead === true || (auth.token.companyId != null && query.orderByChild === 'companyId' && query.equalTo === auth.token.companyId) || (query.orderByChild === 'driverId' && query.equalTo === auth.uid))",
+      "$tripId": {
+        ".read": "auth != null && (auth.token.admin === true || auth.token.superAdmin === true || auth.token.supportRead === true || (auth.token.companyId != null && data.child('companyId').val() === auth.token.companyId) || data.child('driverId').val() === auth.uid)",
+        ".write": false
+      }
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
     }
   }
 }

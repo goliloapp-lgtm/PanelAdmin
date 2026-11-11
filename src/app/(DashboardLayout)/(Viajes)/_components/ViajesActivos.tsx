@@ -32,6 +32,7 @@ import {
 import { IconSearch, IconX } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import toast from 'react-hot-toast';
+import { subscribeToTripStatusFeed } from '@/services/b2b';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,33 +101,32 @@ const ViajesActivos = () => {
     const [selectedRide, setSelectedRide] = useState<ActiveRideEnriched | null>(null);
     const [cancelling, setCancelling] = useState(false);
 
-    // ── 1. Subscribe to rideRequests in RTDB ─────────────────────────────────
+    // ── 1. Subscribe to RTDB (tripStatusFeed) in real time ─────────────
     useEffect(() => {
-        const db = getDatabase(firebaseApp);
-        const ridesRef = ref(db, 'rideRequests');
+        const unsubscribe = subscribeToTripStatusFeed((feedMap) => {
+            const activeList: ActiveRide[] = Object.entries(feedMap)
+                .filter(([_, r]) => !r.isTerminal)
+                .map(([id, val]) => ({
+                    id,
+                    status: val.status,
+                    companyId: val.companyId,
+                    driverId: val.driverId || undefined,
+                    driverName: val.driverName || undefined,
+                    driverPhone: val.driverPhone || undefined,
+                    passengerName: val.passengerName || undefined,
+                    passengerPhone: val.passengerPhone || undefined,
+                    vehicleId: val.vehicleId || undefined,
+                    vehiclePlate: val.vehiclePlate || undefined,
+                    serviceType: 'B2B',
+                    updatedAt: val.updatedAt,
+                }));
+            setRawRides(activeList);
+            setLoadingRTDB(false);
+        });
 
-        const unsubscribe = onValue(
-            ridesRef,
-            (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    const rides: ActiveRide[] = Object.entries(data).map(([id, val]) => ({
-                        id,
-                        ...(val as object),
-                    }));
-                    setRawRides(rides);
-                } else {
-                    setRawRides([]);
-                }
-                setLoadingRTDB(false);
-            },
-            (error) => {
-                console.error('Error fetching rideRequests from RTDB:', error);
-                setLoadingRTDB(false);
-            }
-        );
-
-        return () => unsubscribe();
+        return () => {
+            unsubscribe();
+        };
     }, []);
 
     // ── 2. Enrich rides with user/driver emails from Firestore ────────────────

@@ -1092,6 +1092,42 @@ export const cancelTripCallable = httpsCallable<
   }
 >(functions, "cancelTrip");
 
+// --- CF-67: completeRide ---
+export const completeRideCallable = httpsCallable<
+  { rideId: string },
+  {
+    rideId: string;
+    status: "completed";
+    driverId: string;
+    completedAt: string;
+    idempotent?: boolean;
+  }
+>(functions, "completeRide");
+
+// --- completeTrip ---
+export const completeTripCallable = httpsCallable<
+  { tripId: string },
+  { tripId: string; status: "completed" }
+>(functions, "completeTrip");
+
+// --- dispatchScheduledTrip ---
+export const dispatchScheduledTripCallable = httpsCallable<
+  { scheduledTripId: string },
+  { scheduledTripId: string; status: string; tripId: string; rideRequestId: string; driverId: string }
+>(functions, "dispatchScheduledTrip");
+
+// --- notifyClientDriverArrived ---
+export const notifyClientDriverArrivedCallable = httpsCallable<
+  { rideId: string; driverId: string; clientId: string; pickupAddress?: string; driverName?: string; driverVehicle?: string },
+  { success: boolean }
+>(functions, "notifyClientDriverArrived");
+
+// --- startTrip ---
+export const startTripCallable = httpsCallable<
+  { rideId: string },
+  { rideId: string; status: string; startedAt: string; idempotent?: boolean }
+>(functions, "startTrip");
+
 // --- listVehicleTypes ---
 export interface VehicleTypeSummary {
   id: string;
@@ -1284,6 +1320,27 @@ export const reassignTripDriverCallable = httpsCallable<
   ReassignTripDriverParams,
   ReassignTripDriverResponse
 >(functions, "reassignTripDriver");
+
+export interface PlatformSetRideStatusParams {
+  tripId: string;
+  targetStatus: string;
+  reason: string;
+  driverId?: string;
+  vehicleId?: string;
+}
+
+export interface PlatformSetRideStatusResponse {
+  success: boolean;
+  tripId: string;
+  status: string;
+  updatedAt: number;
+}
+
+export const platformSetRideStatusCallable = httpsCallable<
+  PlatformSetRideStatusParams,
+  PlatformSetRideStatusResponse
+>(functions, "platformSetRideStatus");
+
 
 
 
