@@ -78,7 +78,35 @@ export function formatFriendlyError(
     return "Por favor selecciona un pasajero corporativo activo de la empresa.";
   }
 
-  // 7. Categoría vehicular o tarifa
+  // 7. Tarifas y categorías vehiculares (distinguiendo formato/categoría/tasa de alta B2B vs cotización)
+  if (
+    combined.includes("object keyed by categoryid") ||
+    combined.includes('requires "farerates"')
+  ) {
+    return "El formato de tarifas por categoría (fareRates) es inválido: debe enviarse como un mapa por categoría.";
+  }
+
+  const invalidB2BCategoryMatch = rawMessage.match(
+    /fareRates\.([^\s]+)\s+is not a b2b-enabled category/i
+  );
+  if (invalidB2BCategoryMatch || combined.includes("not a b2b-enabled category")) {
+    const categoryName = invalidB2BCategoryMatch?.[1];
+    return categoryName
+      ? `La categoría "${categoryName}" no está habilitada para operación corporativa B2B.`
+      : "La categoría seleccionada no está habilitada para operación corporativa B2B.";
+  }
+
+  const invalidRateMatch = rawMessage.match(/fareRates\.([^\s]+)\s+is\b/i);
+  if (
+    combined.includes("not a rate greater than zero") ||
+    (combined.includes("farerates.") && combined.includes("greater than zero"))
+  ) {
+    const categoryName = invalidRateMatch?.[1];
+    return categoryName
+      ? `La tarifa por km para "${categoryName}" debe ser un número mayor a $0.00.`
+      : "La tarifa por km debe ser un número mayor a $0.00.";
+  }
+
   if (
     combined.includes("categoryid") ||
     combined.includes("vehicle category") ||

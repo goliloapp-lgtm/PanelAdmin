@@ -41,6 +41,14 @@ import {
   CostCenter,
   LimitRequest,
 } from "@/types/b2b";
+import {
+  buildCreateCompanyFareRatesMap,
+  buildCreateCompanyPayload,
+  normalizeBudgetLimitValue,
+  type CreateCompanyFormInput,
+} from "./companyPayload";
+
+export { buildCreateCompanyFareRatesMap, buildCreateCompanyPayload };
 
 const getCompanyCol = (countryCode = "sv") =>
   collection(db, "countries", countryCode.toLowerCase(), "b2bCompanies");
@@ -359,11 +367,7 @@ export const provisionB2BCompanyAuthUser = async ({
 };
 
 export const createB2BCompany = async (
-  data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt"> & {
-    fareRatesList?: Array<{ categoryId: string; fareRate: number }>;
-    costCentreName?: string;
-    minimumBookingLeadMinutes?: number;
-  }
+  data: CreateCompanyFormInput
 ): Promise<{ id: string; provisionalPassword: string }> => {
   if (data.billingPeriod === "biweekly") {
     throw new Error(
@@ -371,58 +375,11 @@ export const createB2BCompany = async (
     );
   }
 
-  const { initialPassword: _ignoredPassword, ...companyData } = data;
-  const negotiatedFareRate =
-    typeof companyData.negotiatedFareRate === "number" &&
-    Number.isFinite(companyData.negotiatedFareRate) &&
-    companyData.negotiatedFareRate > 0
-      ? Number(companyData.negotiatedFareRate)
-      : 0.67;
-
-  const countryCode = (companyData.countryId || "sv").toLowerCase();
-  const initialBudgetLimit = normalizeBudgetLimitValue(companyData.creditLimit);
-  const [firstName, ...restName] = (
-    companyData.contactName || "Administrador Corporativo"
-  )
-    .trim()
-    .split(" ");
-  const lastName = restName.join(" ") || "Corporativo";
-
-  const fareRatesPayload =
-    Array.isArray(data.fareRatesList) && data.fareRatesList.length > 0
-      ? data.fareRatesList.filter(
-          (r) => r.categoryId && typeof r.fareRate === "number" && r.fareRate > 0
-        )
-      : [{ categoryId: "suv", fareRate: negotiatedFareRate }];
+  const payload = buildCreateCompanyPayload(data);
+  const countryCode = (payload.countryId || "sv").toLowerCase();
 
   // CF-43: Alta atómica de empresa, centro de costo, tarifas y usuario administrador vía createCompanyCallable
-  const res = await createCompanyCallable({
-    countryId: countryCode,
-    name: (companyData.tradeName || companyData.legalName).trim(),
-    legalName: (companyData.legalName || companyData.tradeName).trim(),
-    nit: companyData.nit.trim(),
-    ...(companyData.nrc?.trim() ? { nrc: companyData.nrc.trim() } : {}),
-    billingPeriod: companyData.billingPeriod || "monthly",
-    paymentCondition: companyData.paymentCondition || "credit30",
-    requiresCCF: Boolean(companyData.requiresCCF),
-    minimumBookingLeadMinutes:
-      typeof data.minimumBookingLeadMinutes === "number" &&
-      data.minimumBookingLeadMinutes >= 0
-        ? Math.round(data.minimumBookingLeadMinutes)
-        : 180,
-    costCentre: {
-      name: (data.costCentreName || "Operaciones Corporativas").trim(),
-      ...(initialBudgetLimit !== null && initialBudgetLimit > 0
-        ? { budgetLimit: Math.round(initialBudgetLimit) }
-        : {}),
-    },
-    ...(fareRatesPayload.length > 0 ? { fareRates: fareRatesPayload } : {}),
-    admin: {
-      email: companyData.email.trim().toLowerCase(),
-      firstName: firstName || "Admin",
-      lastName,
-    },
-  });
+  const res = await createCompanyCallable(payload);
 
   const createdCompanyId = res.data.companyId;
 
@@ -431,10 +388,10 @@ export const createB2BCompany = async (
     await createTravellerCallable({
       companyId: createdCompanyId,
       countryId: countryCode,
-      name: (companyData.contactName || "Viajero Corporativo").trim(),
-      ...(companyData.phone?.trim() ? { phone: companyData.phone.trim() } : {}),
-      ...(companyData.email?.trim()
-        ? { email: companyData.email.trim().toLowerCase() }
+      name: (data.contactName || "Viajero Corporativo").trim(),
+      ...(data.phone?.trim() ? { phone: data.phone.trim() } : {}),
+      ...(data.email?.trim()
+        ? { email: data.email.trim().toLowerCase() }
         : {}),
     });
   } catch (trErr) {
@@ -489,21 +446,6 @@ export const updateB2BCompanyStatus = async (
   countryCode = "sv"
 ): Promise<void> => {
   return updateB2BCompany(id, { status, countryId: countryCode }, countryCode);
-};
-
-/**
- * Normaliza `budgetLimit` según CF-23:
- * `null` o `undefined` = SIN LÍMITE (jamás coercer a 0).
- * Número >= 0 = techo efectivo en USD (`0` bloquea el despacho).
- */
-const normalizeBudgetLimitValue = (
-  raw: number | null | undefined
-): number | null => {
-  if (raw === null || raw === undefined) {
-    return null;
-  }
-  const num = Number(raw);
-  return Number.isFinite(num) && num >= 0 ? num : null;
 };
 
 export const getCostCenters = async (

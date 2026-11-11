@@ -583,10 +583,7 @@ export interface CreateCompanyParams {
     name: string;
     budgetLimit?: number;
   };
-  fareRates?: Array<{
-    categoryId: string;
-    fareRate: number;
-  }>;
+  fareRates?: Record<string, number>;
   admin: {
     email: string;
     firstName?: string;
