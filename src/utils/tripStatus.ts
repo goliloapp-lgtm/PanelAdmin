@@ -93,6 +93,9 @@ export function mapRawTripStatus(rawStatus: string | null | undefined): B2BReque
     case "rejected":
       return "rejected";
 
+    case "pending_approval":
+      return "requested";
+
     default:
       return "requested";
   }

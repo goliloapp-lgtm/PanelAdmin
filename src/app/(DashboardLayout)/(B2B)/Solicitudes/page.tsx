@@ -59,6 +59,9 @@ import {
   PlatformScheduledTripRow,
   listPlatformTripsCallable,
   writeTripHistoryCallable,
+  platformAdvanceTripCallable,
+  approveScheduledTripForCompanyCallable,
+  rejectScheduledTripForCompanyCallable,
 } from "@/utils/functions";
 import GoogleTripTrackingMap from "../_components/GoogleTripTrackingMap";
 import StatusBadge from "../_components/StatusBadge";
@@ -986,6 +989,52 @@ const B2BSolicitudesPage = () => {
     }
   };
 
+  // --- platformAdvanceTrip: avanzar viaje atascado desde consola de plataforma ---
+  const handlePlatformAdvance = async (
+    targetStatus: "accepted" | "driver_arrived" | "in_progress" | "completed"
+  ) => {
+    if (!activeRequest) return;
+    const reason = window.prompt(
+      "Motivo para avanzar el estado del viaje (obligatorio, máx 500 caracteres):"
+    );
+    if (!reason || reason.trim().length === 0) {
+      toast.error("Debe ingresar un motivo para avanzar el viaje.");
+      return;
+    }
+    setUpdating(true);
+    try {
+      const tripId = activeRequest.tripId || activeRequest.id;
+      const res = await platformAdvanceTripCallable({
+        tripId,
+        targetStatus,
+        reason: reason.trim().slice(0, 500),
+      });
+      const statusLabel =
+        targetStatus === "completed"
+          ? "Completado"
+          : targetStatus === "in_progress"
+          ? "En Curso"
+          : targetStatus === "driver_arrived"
+          ? "Conductor en Punto"
+          : "Aceptado";
+      toast.success(
+        res.data.changed
+          ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
+          : `Viaje ya estaba en "${statusLabel}" (idempotente).`
+      );
+      await fetchScheduledTrips();
+      listTripEventsCallable({ tripId, limit: 30 })
+        .then((r) => setTripEvents(r.data?.events || []))
+        .catch(() => {});
+    } catch (err: any) {
+      toast.error(
+        formatFriendlyError(err, "No se pudo avanzar el estado del viaje.")
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleResolveIncident = async (incId: string) => {
     setResolvingIncidentId(incId);
     try {
@@ -1533,70 +1582,71 @@ const B2BSolicitudesPage = () => {
               Actualizar Estado Operativo en Tiempo Real
             </Typography>
             <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-              Las transiciones en ruta son ejecutadas por el conductor asignado desde App Driver (backend 9731da6); la consola asigna, reasigna, reporta incidencias y cancela antes de iniciar.
+              Transiciones por conductor (App Driver) o por plataforma (platformAdvanceTrip) para destrabar viajes atascados; asignación, incidencias y cancelación pre-despacho.
             </Typography>
             <Grid container spacing={1} mb={3}>
               <Grid size={{ xs: 6 }}>
-                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
-                  <span>
-                    <Button
-                      fullWidth
-                      size="small"
-                      variant="outlined"
-                      startIcon={<IconPlayerPlay size={15} />}
-                      disabled
-                    >
-                      En Camino al Origen
-                    </Button>
-                  </span>
-                </Tooltip>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  startIcon={<IconPlayerPlay size={15} />}
+                  disabled={updating || activeRequest.status !== "assigned"}
+                  onClick={() => handlePlatformAdvance("accepted")}
+                >
+                  En Camino al Origen
+                </Button>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
-                  <span>
-                    <Button
-                      fullWidth
-                      size="small"
-                      variant="outlined"
-                      startIcon={<IconMapPin size={15} />}
-                      disabled
-                    >
-                      Conductor en Punto
-                    </Button>
-                  </span>
-                </Tooltip>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  startIcon={<IconMapPin size={15} />}
+                  disabled={
+                    updating ||
+                    !["assigned", "enRoute"].includes(activeRequest.status)
+                  }
+                  onClick={() => handlePlatformAdvance("driver_arrived")}
+                >
+                  Conductor en Punto
+                </Button>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
-                  <span>
-                    <Button
-                      fullWidth
-                      size="small"
-                      variant="outlined"
-                      color="info"
-                      startIcon={<IconCar size={15} />}
-                      disabled
-                    >
-                      Iniciar Viaje (En Curso)
-                    </Button>
-                  </span>
-                </Tooltip>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="outlined"
+                  color="info"
+                  startIcon={<IconCar size={15} />}
+                  disabled={
+                    updating ||
+                    !["assigned", "enRoute", "driverArrived"].includes(
+                      activeRequest.status
+                    )
+                  }
+                  onClick={() => handlePlatformAdvance("in_progress")}
+                >
+                  Iniciar Viaje (En Curso)
+                </Button>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
-                  <span>
-                    <Button
-                      fullWidth
-                      size="small"
-                      variant="contained"
-                      color="success"
-                      startIcon={<IconCheck size={15} />}
-                      disabled
-                    >
-                      Marcar Completado
-                    </Button>
-                  </span>
-                </Tooltip>
+                <Button
+                  fullWidth
+                  size="small"
+                  variant="contained"
+                  color="success"
+                  startIcon={<IconCheck size={15} />}
+                  disabled={
+                    updating ||
+                    !["assigned", "enRoute", "driverArrived", "inService"].includes(
+                      activeRequest.status
+                    )
+                  }
+                  onClick={() => handlePlatformAdvance("completed")}
+                >
+                  Marcar Completado
+                </Button>
               </Grid>
               <Grid
                 size={{
@@ -1650,6 +1700,82 @@ const B2BSolicitudesPage = () => {
                     </Button>
                   </Grid>
                 )}
+
+              {/* S6: Aprobar/Rechazar reservas pending_approval */}
+              {((activeRequest as any).rawStatus === "pending_approval" ||
+                (activeRequest as any).status === "pending_approval") && (
+                <Grid size={{ xs: 12 }}>
+                  <Alert severity="info" sx={{ mb: 1 }}>
+                    Esta reserva fue creada por vía de excepción (S6) y requiere aprobación de un administrador diferente al creador (cuatro ojos).
+                  </Alert>
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      variant="contained"
+                      color="success"
+                      size="small"
+                      disabled={updating}
+                      onClick={async () => {
+                        setUpdating(true);
+                        try {
+                          const schedId =
+                            (activeRequest as any).scheduledTripId ||
+                            activeRequest.tripId ||
+                            activeRequest.id;
+                          await approveScheduledTripForCompanyCallable({
+                            scheduledTripId: schedId,
+                          });
+                          toast.success("Reserva aprobada y enviada al pool de conductores.");
+                          await fetchScheduledTrips();
+                        } catch (err: any) {
+                          toast.error(
+                            formatFriendlyError(err, "No se pudo aprobar la reserva.")
+                          );
+                        } finally {
+                          setUpdating(false);
+                        }
+                      }}
+                    >
+                      Aprobar Reserva (S6)
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      size="small"
+                      disabled={updating}
+                      onClick={async () => {
+                        const reason = window.prompt(
+                          "Motivo del rechazo de la reserva (obligatorio, máx 500 caracteres):"
+                        );
+                        if (!reason || reason.trim().length === 0) {
+                          toast.error("Debe ingresar un motivo para rechazar la reserva.");
+                          return;
+                        }
+                        setUpdating(true);
+                        try {
+                          const schedId =
+                            (activeRequest as any).scheduledTripId ||
+                            activeRequest.tripId ||
+                            activeRequest.id;
+                          await rejectScheduledTripForCompanyCallable({
+                            scheduledTripId: schedId,
+                            reason: reason.trim().slice(0, 500),
+                          });
+                          toast.success("Reserva rechazada. El techo ha sido liberado.");
+                          await fetchScheduledTrips();
+                        } catch (err: any) {
+                          toast.error(
+                            formatFriendlyError(err, "No se pudo rechazar la reserva.")
+                          );
+                        } finally {
+                          setUpdating(false);
+                        }
+                      }}
+                    >
+                      Rechazar Reserva (S6)
+                    </Button>
+                  </Stack>
+                </Grid>
+              )}
             </Grid>
 
             <Divider sx={{ mb: 2 }} />

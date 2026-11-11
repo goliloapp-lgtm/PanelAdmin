@@ -1344,7 +1344,62 @@ export const markDriverArrivedCallable = httpsCallable<
   MarkDriverArrivedResponse
 >(functions, "markDriverArrived");
 
+// --- CF-88: platformAdvanceTrip (avanzar viaje atascado desde plataforma) ---
+export interface PlatformAdvanceTripParams {
+  tripId: string;
+  targetStatus: "accepted" | "driver_arrived" | "in_progress" | "completed";
+  reason: string;
+}
 
+export interface PlatformAdvanceTripResponse {
+  tripId: string;
+  status: string;
+  changed: boolean;
+  releasedLock: boolean;
+}
 
+export const platformAdvanceTripCallable = httpsCallable<
+  PlatformAdvanceTripParams,
+  PlatformAdvanceTripResponse
+>(functions, "platformAdvanceTrip");
 
+// --- CF-89: approveScheduledTripForCompany (aprobar reserva vía excepción S6) ---
+export interface ApproveScheduledTripForCompanyParams {
+  scheduledTripId: string;
+}
+
+export interface ApproveScheduledTripForCompanyResponse {
+  scheduledTripId: string;
+  status: string;
+  approvedBy: string;
+}
+
+export const approveScheduledTripForCompanyCallable = httpsCallable<
+  ApproveScheduledTripForCompanyParams,
+  ApproveScheduledTripForCompanyResponse
+>(functions, "approveScheduledTripForCompany");
+
+// --- CF-90: rejectScheduledTripForCompany (rechazar reserva vía excepción S6) ---
+export interface RejectScheduledTripForCompanyParams {
+  scheduledTripId: string;
+  reason: string;
+}
+
+export interface RejectScheduledTripForCompanyResponse {
+  scheduledTripId: string;
+  status: string;
+  costCentreId: string;
+  releasedAmount: number;
+  budget: {
+    spent: number;
+    reserved: number;
+    budgetLimit: number | null;
+  };
+  rejectedBy: string;
+}
+
+export const rejectScheduledTripForCompanyCallable = httpsCallable<
+  RejectScheduledTripForCompanyParams,
+  RejectScheduledTripForCompanyResponse
+>(functions, "rejectScheduledTripForCompany");
 
