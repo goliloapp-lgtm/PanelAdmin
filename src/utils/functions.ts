@@ -221,8 +221,16 @@ export interface CreateTripParams {
   vehicleCategory?: "suv" | "pickup" | "microbus" | "standard" | string;
   distance?: number;
   durationMinutes?: number;
+  rideTimeMinutes?: number;
   legs?: CreateTripLegInput[];
   travellerId?: string;
+  costCentreId?: string;
+  originAddress?: string;
+  originLatitude?: number;
+  originLongitude?: number;
+  destinationAddress?: string;
+  destinationLatitude?: number;
+  destinationLongitude?: number;
   origin?: Record<string, unknown>;
   destination?: Record<string, unknown>;
   paymentMethod?: string;

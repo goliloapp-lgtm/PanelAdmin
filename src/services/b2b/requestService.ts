@@ -252,13 +252,24 @@ export const createB2BServiceRequest = async (
     folio = schedRes.data.folio;
   } else {
     // Invoke backend callable `createTrip` for immediate requests
+    const categoryId =
+      data.vehicleCategory === "pickup"
+        ? "pickup-doble-cabina"
+        : data.vehicleCategory || "suv";
+
     const callableRes = await createTripCallable({
       countryId: "sv",
-      vehicleCategory: data.vehicleCategory,
+      categoryId,
       legs,
       travellerId: data.travellerId,
-      origin: data.origin as unknown as Record<string, unknown>,
-      destination: data.destination as unknown as Record<string, unknown>,
+      costCentreId: data.costCenterId || undefined,
+      originAddress: data.origin.address,
+      originLatitude: data.origin.lat,
+      originLongitude: data.origin.lng,
+      destinationAddress: data.destination.address,
+      destinationLatitude: data.destination.lat,
+      destinationLongitude: data.destination.lng,
+      rideTimeMinutes: estDuration,
       paymentMethod: "company_account",
     });
     if (callableRes?.data?.tripId) {

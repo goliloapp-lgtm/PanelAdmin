@@ -27,6 +27,7 @@ import {
   Card,
   CardContent,
   Grid,
+  Tooltip,
 } from "@mui/material";
 import {
   IconPlus,
@@ -637,12 +638,27 @@ const B2BSolicitudesPage = () => {
 
   const compatibleVehicles = useMemo(() => {
     if (!activeRequest) return [];
-    return vehicles.filter(
-      (v) =>
-        v.status === "active" &&
-        (v.category === activeRequest.vehicleCategory ||
-          v.maxPassengers >= activeRequest.passengersCount)
-    );
+    const pax = activeRequest.passengersCount || 1;
+    if (pax > 12) return [];
+
+    return vehicles.filter((v) => {
+      if (v.status !== "active") return false;
+      if (v.maxPassengers < pax) return false;
+
+      // 5 a 12 pasajeros: Exclusivamente Microbús (Invariante Lilo SV)
+      if (pax > 4) {
+        return v.category === "microbus";
+      }
+
+      // 1 a 4 pasajeros: compatible con la categoría solicitada o microbús
+      if (activeRequest.vehicleCategory) {
+        return (
+          v.category === activeRequest.vehicleCategory ||
+          (activeRequest.vehicleCategory === "suv" && v.category === "microbus")
+        );
+      }
+      return true;
+    });
   }, [vehicles, activeRequest]);
 
   const handleAssignVehicle = async () => {
@@ -842,7 +858,7 @@ const B2BSolicitudesPage = () => {
             etaMinutes: activeRequest.estimatedDurationMinutes || 25,
             startedAt: Date.now() - 30 * 60 * 1000,
             completedAt: Date.now(),
-            paymentMethod: "corporate_credit",
+            paymentMethod: "corporate",
           }).catch((e) =>
             console.warn("[Solicitudes] writeTripHistory error:", e)
           );
@@ -1521,54 +1537,66 @@ const B2BSolicitudesPage = () => {
             </Typography>
             <Grid container spacing={1} mb={3}>
               <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  startIcon={<IconPlayerPlay size={15} />}
-                  disabled={updating}
-                  onClick={() => handleTransitionStatus("enRoute")}
-                >
-                  En Camino al Origen
-                </Button>
+                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
+                  <span>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      startIcon={<IconPlayerPlay size={15} />}
+                      disabled
+                    >
+                      En Camino al Origen
+                    </Button>
+                  </span>
+                </Tooltip>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  startIcon={<IconMapPin size={15} />}
-                  disabled={updating}
-                  onClick={() => handleTransitionStatus("driverArrived")}
-                >
-                  Conductor en Punto
-                </Button>
+                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
+                  <span>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      startIcon={<IconMapPin size={15} />}
+                      disabled
+                    >
+                      Conductor en Punto
+                    </Button>
+                  </span>
+                </Tooltip>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  color="info"
-                  startIcon={<IconCar size={15} />}
-                  disabled={updating}
-                  onClick={() => handleTransitionStatus("inService")}
-                >
-                  Iniciar Viaje (En Curso)
-                </Button>
+                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
+                  <span>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      color="info"
+                      startIcon={<IconCar size={15} />}
+                      disabled
+                    >
+                      Iniciar Viaje (En Curso)
+                    </Button>
+                  </span>
+                </Tooltip>
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="contained"
-                  color="success"
-                  startIcon={<IconCheck size={15} />}
-                  disabled={updating}
-                  onClick={() => handleTransitionStatus("completed")}
-                >
-                  Marcar Completado
-                </Button>
+                <Tooltip title="Transición exclusiva del conductor asignado desde App Driver (Backend 9731da6)">
+                  <span>
+                    <Button
+                      fullWidth
+                      size="small"
+                      variant="contained"
+                      color="success"
+                      startIcon={<IconCheck size={15} />}
+                      disabled
+                    >
+                      Marcar Completado
+                    </Button>
+                  </span>
+                </Tooltip>
               </Grid>
               <Grid
                 size={{

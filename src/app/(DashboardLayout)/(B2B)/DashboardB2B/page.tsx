@@ -43,6 +43,10 @@ import {
   subscribeToB2BRequests,
   subscribeToB2BVehicles,
 } from "@/services/b2b";
+import {
+  listPlatformScheduledTripsCallable,
+  listPlatformTripsCallable,
+} from "@/utils/functions";
 
 const ACTIVE_STATUSES = [
   "requested",
@@ -79,6 +83,61 @@ const B2BDashboardPage = () => {
 
     const unsubComps = subscribeToB2BCompanies((data) => setCompanies(data));
     const unsubVehs = subscribeToB2BVehicles((data) => setVehicles(data));
+
+    Promise.allSettled([
+      listPlatformScheduledTripsCallable({ countryId: "sv", limit: 50 }),
+      listPlatformTripsCallable({ countryId: "sv", limit: 50 }),
+    ]).then(([schedRes, tripsRes]) => {
+      const additional: B2BServiceRequest[] = [];
+      if (schedRes.status === "fulfilled" && schedRes.value.data?.scheduledTrips) {
+        for (const st of schedRes.value.data.scheduledTrips) {
+          const rawCat = String(st.categoryId || "suv").toLowerCase();
+          const category: B2BVehicle["category"] = rawCat.includes("pickup")
+            ? "pickup"
+            : rawCat.includes("microbus")
+            ? "microbus"
+            : "suv";
+          additional.push({
+            id: st.scheduledTripId,
+            folio: `RES-${st.scheduledTripId.slice(0, 8).toUpperCase()}`,
+            scheduledTripId: st.scheduledTripId,
+            companyId: st.companyId || "general",
+            status: (st.status === "dispatched"
+              ? "inService"
+              : st.status === "completed"
+              ? "completed"
+              : st.status === "cancelled"
+              ? "cancelled"
+              : "assigned") as any,
+            vehicleCategory: category,
+            passengersCount: category === "microbus" ? 8 : 2,
+            origin: {
+              address: st.originAddress || "San Salvador",
+              lat: 13.6929,
+              lng: -89.2182,
+            },
+            destination: {
+              address: st.destinationAddress || "Santa Tecla",
+              lat: 13.6769,
+              lng: -89.2797,
+            },
+            scheduledAt: st.scheduledPickupAt,
+            farePrice: st.totalAmount || 0,
+            costEstimate: st.totalAmount || 0,
+            createdAt: st.scheduledPickupAt,
+          } as unknown as B2BServiceRequest);
+        }
+      }
+      if (additional.length > 0) {
+        setRequests((prev) => {
+          const existingIds = new Set(
+            prev.map((p) => p.id || p.tripId || (p as any).scheduledTripId)
+          );
+          const toAdd = additional.filter((a) => !existingIds.has(a.id));
+          return [...prev, ...toAdd];
+        });
+      }
+    });
 
     return () => {
       unsubReqs();

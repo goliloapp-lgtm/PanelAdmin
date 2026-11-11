@@ -235,10 +235,33 @@ export const subscribeToB2BVehicles = (
       (snapshot) => {
         const vehicles = snapshot.docs.map((docSnap) => {
           const raw = docSnap.data();
-          const rawCat = String(raw.category || "suv").toLowerCase();
-          const category = (
-            rawCat === "pickup" || rawCat === "microbus" ? rawCat : "suv"
-          ) as B2BVehicle["category"];
+          const rawCategory = String(raw.categoryId || raw.category || "suv").toLowerCase();
+          let category: B2BVehicle["category"] = "suv";
+          if (
+            rawCategory.includes("microbus") ||
+            rawCategory.includes("minibus") ||
+            rawCategory.includes("furgon") ||
+            rawCategory.includes("coaster") ||
+            rawCategory.includes("van-minivan")
+          ) {
+            category = "microbus";
+          } else if (rawCategory.includes("pickup")) {
+            category = "pickup";
+          }
+
+          const seats = typeof raw.seats === "number" ? raw.seats : null;
+          let maxPassengers =
+            typeof raw.maxPassengers === "number"
+              ? raw.maxPassengers
+              : seats && seats > 1
+              ? seats - 1
+              : category === "microbus"
+              ? 12
+              : 4;
+
+          const isActive = raw.active !== undefined ? Boolean(raw.active) : raw.status !== "inactive";
+          const status = (raw.status || (isActive ? "active" : "inactive")) as B2BVehicle["status"];
+
           return {
             id: docSnap.id,
             countryId: raw.countryId || "sv",
@@ -248,13 +271,12 @@ export const subscribeToB2BVehicles = (
             year: Number(raw.year) || 2024,
             color: raw.color || "Blanco",
             category,
-            maxPassengers:
-              typeof raw.maxPassengers === "number"
-                ? raw.maxPassengers
-                : category === "microbus"
-                ? 12
-                : 4,
-            status: raw.status || "active",
+            categoryId: raw.categoryId || (category === "microbus" ? "microbus" : category === "pickup" ? "pickup-doble-cabina" : "suv"),
+            active: isActive,
+            plateKey: raw.plateKey,
+            seats,
+            maxPassengers,
+            status,
             driverId: raw.driverId,
             driverName: raw.driverName,
             driverPhone: raw.driverPhone,
@@ -284,11 +306,30 @@ export const subscribeToB2BVehicles = (
 export const createB2BVehicle = async (
   data: Omit<B2BVehicle, "id" | "createdAt" | "updatedAt">
 ): Promise<string> => {
+  const normalizedPlate = data.plate.toUpperCase().trim();
+  const plateKey = normalizedPlate.replace(/[^A-Z0-9]/g, "");
+  const categoryId =
+    data.categoryId ||
+    (data.category === "microbus"
+      ? "microbus"
+      : data.category === "pickup"
+      ? "pickup-doble-cabina"
+      : "suv");
+  const isActive = data.active !== undefined ? Boolean(data.active) : data.status !== "inactive";
+
   const payload = {
     ...data,
     countryId: "sv",
-    plate: data.plate.toUpperCase().trim(),
-    maxPassengers: data.category === "microbus" ? 12 : 4,
+    plate: normalizedPlate,
+    plateKey,
+    categoryId,
+    active: isActive,
+    maxPassengers:
+      typeof data.maxPassengers === "number"
+        ? data.maxPassengers
+        : data.category === "microbus"
+        ? 12
+        : 4,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -306,10 +347,30 @@ export const updateB2BVehicle = async (
     updatedAt: serverTimestamp(),
   };
   if (data.plate) {
-    payload.plate = data.plate.toUpperCase().trim();
+    const normalizedPlate = data.plate.toUpperCase().trim();
+    payload.plate = normalizedPlate;
+    payload.plateKey = normalizedPlate.replace(/[^A-Z0-9]/g, "");
+  }
+  if (data.category && !data.categoryId) {
+    payload.categoryId =
+      data.category === "microbus"
+        ? "microbus"
+        : data.category === "pickup"
+        ? "pickup-doble-cabina"
+        : "suv";
   }
   if (data.category) {
-    payload.maxPassengers = data.category === "microbus" ? 12 : 4;
+    payload.maxPassengers =
+      typeof data.maxPassengers === "number"
+        ? data.maxPassengers
+        : data.category === "microbus"
+        ? 12
+        : 4;
+  }
+  if (data.active !== undefined) {
+    payload.active = Boolean(data.active);
+  } else if (data.status) {
+    payload.active = data.status !== "inactive";
   }
   await updateDoc(docRef, payload);
 };
@@ -722,7 +783,13 @@ export const reviewDriverDocumentSV = async (params: {
       }),
     });
   } catch (cfErr: any) {
-    console.warn("[reviewDriverDocumentSV] reviewMembershipDocument note:", cfErr?.code, cfErr?.message);
+    const msg = String(cfErr?.message || "").toLowerCase();
+    if (decision === "approved" && (msg.includes("already accepted") || msg.includes("already approved"))) {
+      console.log("[reviewDriverDocumentSV] Document already accepted in backend:", cfErr?.message);
+    } else {
+      console.error("[reviewDriverDocumentSV] reviewMembershipDocument error:", cfErr);
+      throw cfErr;
+    }
   }
 
   // 2. Obtener expediente de país actualizado en `users/{driverId}/countryMemberships/sv`
@@ -784,9 +851,10 @@ export const reviewDriverDocumentSV = async (params: {
     .filter((d) => d.appliesTo === "driver")
     .every((d) => d.status === "approved");
   const allApproved = updatedDocuments.every((d) => d.status === "approved");
+  const wasMembershipActive = membershipData?.status === "active";
 
-  // 3. CF-34: Si todos los documentos obligatorios del conductor están aceptados, invocar Cloud Function `approveCountryMembership`
-  if (allDriverDocsApproved || allApproved) {
+  // 3. CF-34: Si todos los documentos obligatorios del conductor están aceptados y no estaba activa, invocar `approveCountryMembership`
+  if ((allDriverDocsApproved || allApproved) && !wasMembershipActive) {
     try {
       const approveMembershipFn = httpsCallable<
         { userId: string; code: string },
@@ -799,10 +867,25 @@ export const reviewDriverDocumentSV = async (params: {
       });
       console.log(`[reviewDriverDocumentSV] ✅ approveCountryMembership ejecutada para ${driverId}`);
     } catch (cfErr: any) {
-      console.warn("[reviewDriverDocumentSV] approveCountryMembership callable note:", cfErr?.code, cfErr?.message);
+      const msg = String(cfErr?.message || "").toLowerCase();
+      if (!msg.includes("already active")) {
+        console.warn("[reviewDriverDocumentSV] approveCountryMembership callable note:", cfErr?.code, cfErr?.message);
+      }
     }
+  }
 
-    // CF-37: Invocar setDriverVerification oficial
+  // CF-37: Invocar setDriverVerification oficial según resultado de validación
+  if (allApproved) {
+    const setVerificationFn = httpsCallable<
+      { driverId: string; verified: boolean; reason?: string },
+      { driverId: string; verificationStatus: "verified" | "rejected" }
+    >(functions, "setDriverVerification");
+    await setVerificationFn({
+      driverId,
+      verified: true,
+    });
+    console.log(`[reviewDriverDocumentSV] ✅ setDriverVerification (verified: true) ejecutada para ${driverId}`);
+  } else if (decision === "rejected") {
     try {
       const setVerificationFn = httpsCallable<
         { driverId: string; verified: boolean; reason?: string },
@@ -810,18 +893,18 @@ export const reviewDriverDocumentSV = async (params: {
       >(functions, "setDriverVerification");
       await setVerificationFn({
         driverId,
-        verified: true,
+        verified: false,
+        reason: rejectionReason || rejectionNote || reasonObj?.label || "Documento rechazado",
       });
-      console.log(`[reviewDriverDocumentSV] ✅ setDriverVerification ejecutada para ${driverId}`);
+      console.log(`[reviewDriverDocumentSV] ⚠️ setDriverVerification (verified: false) ejecutada para ${driverId}`);
     } catch (verErr: any) {
-      console.warn("[reviewDriverDocumentSV] setDriverVerification callable note:", verErr?.code, verErr?.message);
+      console.warn("[reviewDriverDocumentSV] setDriverVerification rejection note:", verErr?.code, verErr?.message);
     }
   }
 
-  // 4. CF-31: Actualizar `drivers/{driverId}` SIN escribir b2bDocuments, b2bVerificationStatus o vehicles
+  // 4. CF-31: Limpieza en `drivers/{driverId}` SIN escribir b2bDocuments, b2bVerificationStatus o vehicles
   try {
     await updateDoc(driverRef, {
-      verificationStatus: allApproved ? "verified" : "pending",
       updatedAt: serverTimestamp(),
       b2bDocuments: deleteField(),
       b2bVerificationStatus: deleteField(),

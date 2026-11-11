@@ -261,8 +261,11 @@ export const provisionB2BCompanyAuthUser = async ({
       lastName,
     });
 
-    uid = res.data.uid;
-    finalPassword = res.data.provisionalPassword;
+    return {
+      uid: res.data.uid,
+      email: normalizedEmail,
+      temporaryPassword: res.data.provisionalPassword || "",
+    };
   } catch (authErr: any) {
     console.warn("[companyService] createCompanyUser note, falling back to secondaryAuth:", authErr?.message || authErr);
     // Fallback: Aprovisionamiento con secondaryAuth

@@ -252,7 +252,7 @@ const NuevaSolicitudB2BPage = () => {
     // Map vehicleCategory to backend categoryId
     const categoryMap: Record<string, string> = {
       suv: "suv",
-      pickup: "pickup",
+      pickup: "pickup-doble-cabina",
       microbus: "microbus",
     };
     const categoryId = categoryMap[vehicleCategory] ?? vehicleCategory;

@@ -239,6 +239,9 @@ export interface B2BVehicle {
   year: number;
   color: string;
   category: VehicleCategory;
+  categoryId?: string;
+  active?: boolean;
+  plateKey?: string;
   seats?: number | null;
   maxPassengers: number;
   capacitySource?: "maxPassengers" | "derivedFromSeats" | "none";
