@@ -30,6 +30,9 @@
         },
         "driverId": {
           ".validate": "newData.val() === $conductorId"
+        },
+        "currentRideId": {
+          ".validate": "!newData.exists() || (newData.isString() && newData.val().length > 0 && root.child('rideRequests').child(newData.val()).exists())"
         }
       }
     },
@@ -43,17 +46,11 @@
       }
     },
     "rideRequests": {
-      ".indexOn": ["status", "companyId", "driverId"],
+      ".indexOn": [
+        "status"
+      ],
       "$rideId": {
-        ".read": "auth != null && (data.child('userId').val() === auth.uid || data.child('driverId').val() === auth.uid || auth.token.admin === true || auth.token.superAdmin === true || (auth.token.companyId != null && data.child('companyId').val() === auth.token.companyId))",
-        ".write": false
-      }
-    },
-    "tripStatusFeed": {
-      ".indexOn": ["companyId", "driverId", "updatedAt"],
-      ".read": "auth != null && (auth.token.admin === true || auth.token.superAdmin === true || auth.token.supportRead === true || (auth.token.companyId != null && query.orderByChild === 'companyId' && query.equalTo === auth.token.companyId) || (query.orderByChild === 'driverId' && query.equalTo === auth.uid))",
-      "$tripId": {
-        ".read": "auth != null && (auth.token.admin === true || auth.token.superAdmin === true || auth.token.supportRead === true || (auth.token.companyId != null && data.child('companyId').val() === auth.token.companyId) || data.child('driverId').val() === auth.uid)",
+        ".read": "auth != null && (data.child('userId').val() === auth.uid || data.child('driverId').val() === auth.uid)",
         ".write": false
       }
     },

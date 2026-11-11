@@ -1,12 +1,10 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { getDatabase, ref, onValue, remove } from 'firebase/database';
-import { getFirestore, collection, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { firebaseApp } from '@/utils/firebase';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { ref, onValue } from 'firebase/database';
+import { rtdb } from '@/utils/firebase';
 import { queryScopedCollection } from '@/utils/adminCheck';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '@/utils/functions';
+import { listPlatformTripsCallable, cancelTripCallable } from '@/utils/functions';
 import {
     Typography,
     Box,
@@ -32,7 +30,7 @@ import {
 import { IconSearch, IconX } from '@tabler/icons-react';
 import DashboardCard from '@/app/(DashboardLayout)//components/shared/DashboardCard';
 import toast from 'react-hot-toast';
-import { subscribeToTripStatusFeed } from '@/services/b2b';
+import { formatFriendlyError } from '@/utils/friendlyError';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,33 +99,105 @@ const ViajesActivos = () => {
     const [selectedRide, setSelectedRide] = useState<ActiveRideEnriched | null>(null);
     const [cancelling, setCancelling] = useState(false);
 
-    // ── 1. Subscribe to RTDB (tripStatusFeed) in real time ─────────────
-    useEffect(() => {
-        const unsubscribe = subscribeToTripStatusFeed((feedMap) => {
-            const activeList: ActiveRide[] = Object.entries(feedMap)
-                .filter(([_, r]) => !r.isTerminal)
-                .map(([id, val]) => ({
-                    id,
-                    status: val.status,
-                    companyId: val.companyId,
-                    driverId: val.driverId || undefined,
-                    driverName: val.driverName || undefined,
-                    driverPhone: val.driverPhone || undefined,
-                    passengerName: val.passengerName || undefined,
-                    passengerPhone: val.passengerPhone || undefined,
-                    vehicleId: val.vehicleId || undefined,
-                    vehiclePlate: val.vehiclePlate || undefined,
-                    serviceType: 'B2B',
-                    updatedAt: val.updatedAt,
+    const TERMINAL_TRIP_STATUSES = useMemo(
+        () => new Set(['completed', 'cancelled', 'cancelled_by_company', 'expired', 'rejected', 'invoiced']),
+        []
+    );
+    const fetchingRef = useRef(false);
+
+    const fetchActiveRides = useCallback(async () => {
+        if (fetchingRef.current) return;
+        fetchingRef.current = true;
+        try {
+            const res = await listPlatformTripsCallable({ countryId: 'sv', limit: 100 });
+            const trips = Array.isArray(res.data?.trips) ? res.data.trips : [];
+            const activeList: ActiveRide[] = trips
+                .filter((t) => !TERMINAL_TRIP_STATUSES.has(String(t.status || '').trim()))
+                .map((t) => ({
+                    id: t.tripId,
+                    status: t.status,
+                    driverId: t.driverId || undefined,
+                    passengerId: t.userId || t.passengerId || t.travellerId || undefined,
+                    userId: t.userId || undefined,
+                    driverName: t.driverName || undefined,
+                    passengerName: t.passengerName || t.travellerName || undefined,
+                    paymentMethod: t.paymentMethod || undefined,
+                    farePriceCents:
+                        typeof t.farePriceCents === 'number'
+                            ? t.farePriceCents
+                            : typeof t.totalAmount === 'number'
+                            ? Math.round(t.totalAmount * 100)
+                            : undefined,
+                    originalPrice: typeof t.totalAmount === 'number' ? t.totalAmount : t.originalPrice,
+                    serviceType: t.companyId ? 'B2B' : t.serviceType || 'Retail',
+                    createdAt: t.requestedAt || t.createdAt,
+                    updatedAt: t.updatedAt || t.requestedAt,
+                    origin: t.origin || (t.originAddress ? { address: t.originAddress } : undefined),
+                    destination: t.destination || (t.destinationAddress ? { address: t.destinationAddress } : undefined),
+                    address: t.originAddress || t.address,
                 }));
             setRawRides(activeList);
+        } catch (err) {
+            console.error('[ViajesActivos] Error cargando viajes activos vía listPlatformTrips:', err);
+        } finally {
+            fetchingRef.current = false;
             setLoadingRTDB(false);
-        });
+        }
+    }, [TERMINAL_TRIP_STATUSES]);
+
+    // ── 1. Sincronización por callable oficial + señal reactiva RTDB conductores_activos ──
+    useEffect(() => {
+        void fetchActiveRides();
+
+        const refreshIfVisible = () => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            void fetchActiveRides();
+        };
+        const intervalId = setInterval(refreshIfVisible, 15000);
+        const onFocus = () => void fetchActiveRides();
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                void fetchActiveRides();
+            }
+        };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onVisibility);
+
+        let lastDriverStateSig: string | null = null;
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        const driversRef = ref(rtdb, 'conductores_activos');
+        const unsubDrivers = onValue(
+            driversRef,
+            (snapshot) => {
+                const raw = snapshot.val();
+                const nextSig =
+                    raw && typeof raw === 'object'
+                        ? Object.entries(raw)
+                              .map(([id, v]: [string, any]) => `${id}:${v?.status || ''}:${v?.currentRideId || ''}:${v?.lastStatusUpdate || ''}`)
+                              .sort()
+                              .join('|')
+                        : '__empty__';
+                if (lastDriverStateSig !== null && lastDriverStateSig !== nextSig) {
+                    if (debounceTimer) clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(() => {
+                        void fetchActiveRides();
+                    }, 300);
+                }
+                lastDriverStateSig = nextSig;
+            },
+            (err) => {
+                console.warn('[ViajesActivos RTDB] Listener conductores_activos:', err);
+            }
+        );
 
         return () => {
-            unsubscribe();
+            clearInterval(intervalId);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onVisibility);
+            unsubDrivers();
         };
-    }, []);
+    }, [fetchActiveRides]);
 
     // ── 2. Enrich rides with user/driver emails from Firestore ────────────────
     useEffect(() => {
@@ -139,7 +209,6 @@ const ViajesActivos = () => {
         const enrich = async () => {
             setLoadingEnrich(true);
             try {
-                const firestoreDb = getFirestore(firebaseApp);
 
                 // Fetch country-scoped users and drivers once, build lookup maps (CF-05)
                 const [usersDocs, driversDocs] = await Promise.all([
@@ -242,94 +311,18 @@ const ViajesActivos = () => {
         if (!selectedRide) return;
         setCancelling(true);
         try {
-            const firestoreDb = getFirestore(firebaseApp);
-            const rtdb = getDatabase(firebaseApp);
-
-            // 1. Notify the driver if driverId is present
-            if (selectedRide.driverId) {
-                try {
-                    const notifyDriver = httpsCallable(functions, 'notifyDriverRideCancelled');
-                    await notifyDriver({
-                        rideId: selectedRide.id,
-                        clientId: selectedRide.passengerId || selectedRide.userId || '',
-                        driverId: selectedRide.driverId,
-                        clientName: selectedRide.displayPassengerName || 'Pasajero',
-                        reason: 'Cancelado por el administrador desde el panel de control',
-                        canceledAt: new Date().toISOString()
-                    });
-                } catch (notifyErr) {
-                    console.warn('Driver push notification failed or was ignored:', notifyErr);
-                }
-            }
-
-            // 2. Prepare Firestore historyTrips document (including mandatory countryId - CF-06)
-            const historyTripData: any = {
+            await cancelTripCallable({
                 rideId: selectedRide.id,
-                countryId: (selectedRide as any).countryId || 'sv',
-                status: 'cancelled',
-                paymentMethod: selectedRide.paymentMethod || 'cash',
-                createdAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-                completedAt: Date.now(),
-            };
-
-            // Copy passenger details
-            const passengerId = selectedRide.passengerId || selectedRide.userId;
-            if (passengerId) {
-                historyTripData.passengerId = passengerId;
-                historyTripData.userId = passengerId;
-            }
-            if (selectedRide.displayPassengerName) {
-                historyTripData.passengerName = selectedRide.displayPassengerName;
-            }
-            // Copy driver details
-            if (selectedRide.driverId) {
-                historyTripData.driverId = selectedRide.driverId;
-            }
-            if (selectedRide.displayDriverName) {
-                historyTripData.driverName = selectedRide.displayDriverName;
-            }
-
-            // Copy pricing details
-            if (selectedRide.originalPrice !== undefined) {
-                historyTripData.originalPrice = Number(selectedRide.originalPrice);
-            } else if (selectedRide.farePriceCents !== undefined) {
-                historyTripData.originalPrice = Number(selectedRide.farePriceCents) / 100;
-            }
-            if (selectedRide.farePriceCents !== undefined) {
-                historyTripData.farePriceCents = Number(selectedRide.farePriceCents);
-            } else if (selectedRide.originalPrice !== undefined) {
-                historyTripData.farePriceCents = Math.round(Number(selectedRide.originalPrice) * 100);
-            }
-
-            // Copy other route details
-            if (selectedRide.origin) {
-                historyTripData.origin = selectedRide.origin;
-            }
-            if (selectedRide.destination) {
-                historyTripData.destination = selectedRide.destination;
-            }
-            if (selectedRide.address) {
-                historyTripData.address = selectedRide.address;
-            }
-            if (selectedRide.serviceType) {
-                historyTripData.serviceType = selectedRide.serviceType;
-            }
-
-            // Write to Firestore historyTrips
-            const historyTripRef = doc(firestoreDb, 'historyTrips', selectedRide.id);
-            await setDoc(historyTripRef, historyTripData, { merge: true });
-
-            // 3. Remove from Realtime Database
-            const rideRequestRef = ref(rtdb, `rideRequests/${selectedRide.id}`);
-            await remove(rideRequestRef);
+                reason: 'Cancelado por el administrador desde el panel de control',
+            });
 
             toast.success(`Viaje ${selectedRide.id} cancelado correctamente.`);
             setConfirmOpen(false);
             setSelectedRide(null);
+            await fetchActiveRides();
         } catch (err: any) {
             console.error('Error cancelling ride:', err);
-            toast.error(err?.message || 'Error al cancelar el viaje. Intenta de nuevo.');
+            toast.error(formatFriendlyError(err, 'No se pudo cancelar el viaje. Verifica su estado actual.'));
         } finally {
             setCancelling(false);
         }

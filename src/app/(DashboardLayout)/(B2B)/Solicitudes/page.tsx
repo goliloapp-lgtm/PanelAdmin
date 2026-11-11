@@ -80,9 +80,6 @@ import {
   releaseB2BRequestToPool,
   reportB2BTripProblem,
   reassignB2BTripDriver,
-  subscribeToTripStatusFeed,
-  subscribeToRideRequest,
-  TripStatusFeedMap,
 } from "@/services/b2b";
 import {
   mapRawTripStatus,
@@ -123,9 +120,6 @@ const B2BSolicitudesPage = () => {
       toast.success(cleanMsg);
     }
   };
-
-  // Sincronización canónica y reactiva en tiempo real con Realtime Database (tripStatusFeed)
-  const [tripStatusFeed, setTripStatusFeed] = useState<TripStatusFeedMap>({});
 
   const [searchTerm, setSearchTerm] = useState("");
   const [companyFilter, setCompanyFilter] = useState("all");
@@ -212,10 +206,20 @@ const B2BSolicitudesPage = () => {
     const unsubVehs = subscribeToB2BVehicles((data) => setVehicles(data));
 
     fetchScheduledTrips();
-    // Polling controlado a 30 segundos (las acciones del operador refrescan inmediatamente bajo demanda)
-    const interval = setInterval(fetchScheduledTrips, 30000);
-    const onFocus = () => fetchScheduledTrips();
+    // Polling controlado cada 12s (pausado en segundo plano) + refetch en focus/visibility + listener RTDB
+    const refreshIfVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void fetchScheduledTrips();
+    };
+    const interval = setInterval(refreshIfVisible, 12000);
+    const onFocus = () => void fetchScheduledTrips();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void fetchScheduledTrips();
+      }
+    };
     window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
 
     getDoc(doc(db, "platformConfig", "operations"))
       .then((snap) => {
@@ -238,33 +242,21 @@ const B2BSolicitudesPage = () => {
     return () => {
       clearInterval(interval);
       window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
       unsubReqs();
       unsubComps();
       unsubVehs();
     };
   }, []);
 
-  // Sincronización global en tiempo real mediante tripStatusFeed (WebSocket RTDB)
-  useEffect(() => {
-    const unsubFeed = subscribeToTripStatusFeed((feedMap) => {
-      setTripStatusFeed(feedMap);
-    });
-    return () => unsubFeed();
-  }, []);
-
   const mappedScheduledRequests = useMemo<B2BServiceRequest[]>(() => {
     return platformScheduledTrips.map((st) => {
-      const feed =
-        tripStatusFeed[st.scheduledTripId] ||
-        tripStatusFeed[(st as any).tripId] ||
-        tripStatusFeed[(st as any).id];
       const liveTrip = platformTrips.find(
         (t) => t.tripId === st.scheduledTripId || t.tripId === (st as any).id
       );
-      const effectiveRawStatus =
-        feed?.rawStatus || feed?.status || liveTrip?.status || st.status;
+      const effectiveRawStatus = liveTrip?.status || st.status;
       const mappedStatus = mapRawTripStatus(effectiveRawStatus);
-      const effectiveVehId = feed?.vehicleId || st.acceptedVehicleId;
+      const effectiveVehId = st.acceptedVehicleId || liveTrip?.vehicleId;
       const veh = vehicles.find((v) => v.id === effectiveVehId);
       const comp = companies.find((c) => c.id === st.companyId);
 
@@ -272,26 +264,26 @@ const B2BSolicitudesPage = () => {
         mappedStatus === "seeking_driver" || mappedStatus === "requested";
       const driverName = isSeeking
         ? undefined
-        : feed?.driverName ||
-          veh?.driverName ||
+        : veh?.driverName ||
+          liveTrip?.driverName ||
           (st as any).driverName ||
           undefined;
       const driverPhone = isSeeking
         ? undefined
-        : feed?.driverPhone ||
-          veh?.driverPhone ||
+        : veh?.driverPhone ||
+          liveTrip?.driverPhone ||
           (st as any).driverPhone ||
           undefined;
       const driverId = isSeeking
         ? undefined
-        : feed?.driverId ||
-          (st as any).driverId ||
+        : (st as any).driverId ||
+          liveTrip?.driverId ||
           veh?.driverId ||
           undefined;
       const vehiclePlate = isSeeking
         ? undefined
-        : feed?.vehiclePlate ||
-          veh?.plate ||
+        : veh?.plate ||
+          liveTrip?.vehiclePlate ||
           (st as any).vehiclePlate ||
           undefined;
 
@@ -365,38 +357,31 @@ const B2BSolicitudesPage = () => {
         status: mappedStatus,
       };
     });
-  }, [platformScheduledTrips, platformTrips, tripStatusFeed, vehicles, companies]);
+  }, [platformScheduledTrips, platformTrips, vehicles, companies]);
 
   const requests = useMemo<B2BServiceRequest[]>(() => {
     const list: B2BServiceRequest[] = rawRequests.map((r) => {
-      const targetId = r.tripId || (r as any).scheduledTripId || r.id;
-      const feed =
-        tripStatusFeed[r.id] ||
-        tripStatusFeed[r.tripId] ||
-        tripStatusFeed[(r as any).scheduledTripId] ||
-        tripStatusFeed[targetId];
-      const resolvedStatus = feed?.status || mapRawTripStatus(r.status);
+      const resolvedStatus = mapRawTripStatus(r.status);
       const isSeeking =
         resolvedStatus === "seeking_driver" || resolvedStatus === "requested";
-      const effVehId = feed?.vehicleId || r.assignedVehicleId;
+      const effVehId = r.assignedVehicleId;
       const veh = vehicles.find((v) => v.id === effVehId);
       return {
         ...r,
         status: resolvedStatus,
         assignedDriverId: isSeeking
           ? undefined
-          : feed?.driverId ?? r.assignedDriverId ?? veh?.driverId,
+          : r.assignedDriverId ?? veh?.driverId,
         assignedDriverName: isSeeking
           ? undefined
-          : feed?.driverName ?? r.assignedDriverName ?? veh?.driverName,
+          : r.assignedDriverName ?? veh?.driverName,
         assignedDriverPhone: isSeeking
           ? undefined
-          : feed?.driverPhone ?? r.assignedDriverPhone ?? veh?.driverPhone,
+          : r.assignedDriverPhone ?? veh?.driverPhone,
         assignedVehicleId: isSeeking ? undefined : effVehId,
         assignedVehiclePlate: isSeeking
           ? undefined
-          : feed?.vehiclePlate ?? r.assignedVehiclePlate ?? veh?.plate,
-        notes: feed?.rawStatus === "seeking_driver" ? (feed as any).notes || r.notes : r.notes,
+          : r.assignedVehiclePlate ?? veh?.plate,
       };
     });
 
@@ -408,13 +393,7 @@ const B2BSolicitudesPage = () => {
           r.tripId === sReq.id
       );
 
-      const targetId = sReq.id || sReq.tripId || (sReq as any).scheduledTripId || "";
-      const feed =
-        tripStatusFeed[sReq.id] ||
-        tripStatusFeed[sReq.tripId] ||
-        tripStatusFeed[(sReq as any).scheduledTripId] ||
-        tripStatusFeed[targetId];
-      const resolvedStatus = feed?.status || sReq.status;
+      const resolvedStatus = sReq.status;
       const isSeeking =
         resolvedStatus === "seeking_driver" || resolvedStatus === "requested";
 
@@ -425,19 +404,19 @@ const B2BSolicitudesPage = () => {
           status: resolvedStatus,
           assignedDriverId: isSeeking
             ? undefined
-            : feed?.driverId ?? sReq.assignedDriverId ?? list[existingIdx].assignedDriverId,
+            : sReq.assignedDriverId ?? list[existingIdx].assignedDriverId,
           assignedDriverName: isSeeking
             ? undefined
-            : feed?.driverName ?? sReq.assignedDriverName ?? list[existingIdx].assignedDriverName,
+            : sReq.assignedDriverName ?? list[existingIdx].assignedDriverName,
           assignedDriverPhone: isSeeking
             ? undefined
-            : feed?.driverPhone ?? sReq.assignedDriverPhone ?? list[existingIdx].assignedDriverPhone,
+            : sReq.assignedDriverPhone ?? list[existingIdx].assignedDriverPhone,
           assignedVehicleId: isSeeking
             ? undefined
-            : feed?.vehicleId ?? sReq.assignedVehicleId ?? list[existingIdx].assignedVehicleId,
+            : sReq.assignedVehicleId ?? list[existingIdx].assignedVehicleId,
           assignedVehiclePlate: isSeeking
             ? undefined
-            : feed?.vehiclePlate ?? sReq.assignedVehiclePlate ?? list[existingIdx].assignedVehiclePlate,
+            : sReq.assignedVehiclePlate ?? list[existingIdx].assignedVehiclePlate,
         };
       } else {
         list.push({
@@ -448,8 +427,6 @@ const B2BSolicitudesPage = () => {
     }
 
     const getCreatedTimestamp = (req: B2BServiceRequest): number => {
-      const feedUpd = tripStatusFeed[req.id]?.updatedAt;
-      if (typeof feedUpd === "number" && feedUpd > 0) return feedUpd;
       const c = req.createdAt as any;
       if (typeof c === "number" && c > 0) return c;
       if (typeof c?.toMillis === "function") return c.toMillis();
@@ -464,7 +441,7 @@ const B2BSolicitudesPage = () => {
     list.sort((a, b) => getCreatedTimestamp(b) - getCreatedTimestamp(a));
 
     return list;
-  }, [rawRequests, mappedScheduledRequests, tripStatusFeed, vehicles]);
+  }, [rawRequests, mappedScheduledRequests, vehicles]);
 
   const activeRequest = useMemo(
     () =>
@@ -583,46 +560,61 @@ const B2BSolicitudesPage = () => {
     return () => unsub();
   }, [activeRequest?.assignedDriverId]);
 
-  // Escucha en tiempo real de cambios en rideRequests para la solicitud seleccionada
+  const activeAssignedDriverIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of requests) {
+      if (
+        r.assignedDriverId &&
+        r.status !== "completed" &&
+        r.status !== "cancelled" &&
+        r.status !== "rejected"
+      ) {
+        ids.add(r.assignedDriverId);
+      }
+    }
+    return Array.from(ids).sort().join(",");
+  }, [requests]);
+
+  // Reactividad en vivo desde conductores_activos/{driverId} (regla RTDB 9731da6: auth != null)
   useEffect(() => {
-    const targetRideId =
-      activeRequest?.tripId ||
-      (activeRequest as any)?.scheduledTripId ||
-      activeRequest?.id ||
-      selectedRequestId;
+    if (!activeAssignedDriverIdsKey) return;
+    const driverIds = activeAssignedDriverIdsKey.split(",").filter(Boolean);
+    const lastSigs = new Map<string, string>();
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-    if (!targetRideId) return;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        void fetchScheduledTrips();
+      }, 250);
+    };
 
-    const unsubRide = subscribeToRideRequest(targetRideId, (rideData) => {
-      if (!rideData) return;
-      if (rideData.status) {
-        const mapped = mapRawTripStatus(rideData.status);
-        setTripStatusFeed((prev) => ({
-          ...prev,
-          [targetRideId]: {
-            ...(prev[targetRideId] || {}),
-            tripId: targetRideId,
-            status: mapped,
-            rawStatus: rideData.status,
-            updatedAt: rideData.updatedAt || Date.now(),
-            driverId: rideData.driverId,
-            vehicleId: rideData.vehicleId,
-          } as any,
-        }));
-      }
-      if (rideData.driverTelemetry?.lat || rideData.latitude) {
-        setDriverTelemetry((prev) => prev || {
-          lat: rideData.driverTelemetry?.lat || rideData.latitude,
-          lng: rideData.driverTelemetry?.lng || rideData.longitude,
-          heading: rideData.driverTelemetry?.heading || rideData.bearing,
-          speed: rideData.driverTelemetry?.speed || rideData.speed,
-          status: rideData.driverTelemetry?.status || rideData.status,
-        });
-      }
-    });
+    const unsubscribers = driverIds.map((driverId) =>
+      onValue(
+        ref(rtdb, `conductores_activos/${driverId}`),
+        (snap) => {
+          const val = snap.val();
+          const nextSig =
+            val && typeof val === "object"
+              ? `${val.status || ""}:${val.currentRideId || ""}:${val.lastStatusUpdate || ""}`
+              : "__empty__";
+          const prevSig = lastSigs.get(driverId);
+          lastSigs.set(driverId, nextSig);
+          if (prevSig !== undefined && prevSig !== nextSig) {
+            scheduleRefresh();
+          }
+        },
+        (err) => {
+          console.warn(`[Solicitudes RTDB] Listener conductor ${driverId}:`, err);
+        }
+      )
+    );
 
-    return () => unsubRide();
-  }, [activeRequest?.id, activeRequest?.tripId, (activeRequest as any)?.scheduledTripId, selectedRequestId]);
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      unsubscribers.forEach((unsub) => unsub());
+    };
+  }, [activeAssignedDriverIdsKey]);
 
   const filteredRequests = useMemo(() => {
     return requests.filter((req) => {
@@ -780,18 +772,6 @@ const B2BSolicitudesPage = () => {
             : st
         )
       );
-      setTripStatusFeed((prev) => ({
-        ...prev,
-        [activeRequest.id]: {
-          ...(prev[activeRequest.id] || {}),
-          tripId: activeRequest.id,
-          status: "assigned",
-          rawStatus: "driver_assigned",
-          driverId: resolvedDriverId,
-          vehicleId: veh.id,
-          updatedAt: Date.now(),
-        } as any,
-      }));
       await fetchScheduledTrips();
       setFeedback({
         type: "success",
@@ -822,11 +802,6 @@ const B2BSolicitudesPage = () => {
           targetRideId
         );
 
-        setRawRequests((prev) =>
-          prev.map((r) =>
-            r.id === activeRequest.id || r.id === targetRideId ? { ...r, status: "cancelled" } : r
-          )
-        );
         await fetchScheduledTrips();
         setFeedback({
           type: "success",
@@ -873,55 +848,6 @@ const B2BSolicitudesPage = () => {
           );
         }
 
-        setRawRequests((prev) =>
-          prev.map((r) =>
-            r.id === activeRequest.id ? { ...r, status: nextStatus } : r
-          )
-        );
-        setPlatformScheduledTrips((prev) =>
-          prev.map((st) =>
-            st.scheduledTripId === targetRideId || st.scheduledTripId === activeRequest.id
-              ? {
-                  ...st,
-                  status:
-                    nextStatus === "enRoute"
-                      ? "dispatched"
-                      : nextStatus === "driverArrived"
-                        ? "driver_arrived"
-                        : nextStatus === "inService"
-                          ? "in_progress"
-                          : nextStatus,
-                }
-              : st
-          )
-        );
-        setTripStatusFeed((prev) => ({
-          ...prev,
-          [targetRideId]: {
-            ...(prev[targetRideId] || {}),
-            tripId: targetRideId,
-            status: nextStatus,
-            rawStatus:
-              nextStatus === "driverArrived"
-                ? "driver_arrived"
-                : nextStatus === "inService"
-                  ? "in_progress"
-                  : nextStatus,
-            updatedAt: Date.now(),
-          } as any,
-          [activeRequest.id]: {
-            ...(prev[activeRequest.id] || {}),
-            tripId: activeRequest.id,
-            status: nextStatus,
-            rawStatus:
-              nextStatus === "driverArrived"
-                ? "driver_arrived"
-                : nextStatus === "inService"
-                  ? "in_progress"
-                  : nextStatus,
-            updatedAt: Date.now(),
-          } as any,
-        }));
         await fetchScheduledTrips();
 
         const statusLabel =
@@ -941,9 +867,10 @@ const B2BSolicitudesPage = () => {
         });
       }
     } catch (err: any) {
+      await fetchScheduledTrips().catch(() => {});
       setFeedback({
         type: "error",
-        message: err.message || "Error al actualizar estado.",
+        message: err?.message || "Error al actualizar estado.",
       });
     } finally {
       setUpdating(false);
@@ -1585,9 +1512,12 @@ const B2BSolicitudesPage = () => {
               </Button>
             </Stack>
 
-            {/* Controles de transición de estado en tiempo real */}
-            <Typography variant="subtitle2" fontWeight={700} mb={1}>
+            {/* Controles de transición de estado */}
+            <Typography variant="subtitle2" fontWeight={700} mb={0.5}>
               Actualizar Estado Operativo en Tiempo Real
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
+              Las transiciones en ruta son ejecutadas por el conductor asignado desde App Driver (backend 9731da6); la consola asigna, reasigna, reporta incidencias y cancela antes de iniciar.
             </Typography>
             <Grid container spacing={1} mb={3}>
               <Grid size={{ xs: 6 }}>

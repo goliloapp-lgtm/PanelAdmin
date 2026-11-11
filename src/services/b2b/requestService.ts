@@ -28,7 +28,7 @@ import {
   reassignDriverCallable,
   reportTripProblemCallable,
   reassignTripDriverCallable,
-  platformSetRideStatusCallable,
+  markDriverArrivedCallable,
   completeRideCallable,
   completeTripCallable,
   dispatchScheduledTripCallable,
@@ -299,52 +299,45 @@ export const assignB2BRequestVehicleAndDriver = async (
     reason?: string;
   }
 ): Promise<void> => {
-  // CF-58 / CF-59 / CF-60: Invocar el callable oficial de despacho si la solicitud tiene scheduledTripId o tripId
-  try {
-    const reqDoc = await getB2BRequestById(requestId);
-    const schedId =
-      assignment.scheduledTripId ||
-      (reqDoc as any)?.scheduledTripId ||
-      (!reqDoc?.isImmediate ? reqDoc?.tripId : undefined);
-    const targetTripId = assignment.tripId || reqDoc?.tripId;
+  // CF-58 / CF-59 / CF-60 / CF-86: Invocar el callable oficial y propagar errores sin silenciamiento
+  const reqDoc = await getB2BRequestById(requestId);
+  const schedId =
+    assignment.scheduledTripId ||
+    (reqDoc as any)?.scheduledTripId ||
+    (!reqDoc?.isImmediate ? reqDoc?.tripId : undefined);
+  const targetTripId = assignment.tripId || reqDoc?.tripId;
 
-    if (schedId && !reqDoc?.isImmediate) {
-      if (assignment.vehicleId) {
-        // CF-86: assignScheduledTripDriver deja la reserva driver_assigned directamente sin esperar aceptación
-        await assignScheduledTripDriverCallable({
-          scheduledTripId: schedId,
-          driverId: assignment.driverId,
-          vehicleId: assignment.vehicleId,
-          reason:
-            assignment.reason ||
-            "Asignación directa desde consola de operaciones SuperAdmin Lilo",
-        });
-      } else {
-        await offerScheduledTripCallable({
-          scheduledTripId: schedId,
-          driverId: assignment.driverId,
-        });
-      }
-    } else if (targetTripId) {
-      if (reqDoc?.assignedDriverId && reqDoc.assignedDriverId !== assignment.driverId) {
-        await reassignDriverCallable({
-          tripId: targetTripId,
-          driverId: assignment.driverId,
-          reason: assignment.reason || "Reasignación desde consola de despacho",
-        });
-      } else {
-        await assignDriverCallable({
-          tripId: targetTripId,
-          driverId: assignment.driverId,
-          reason: assignment.reason,
-        });
-      }
+  if (schedId && !reqDoc?.isImmediate) {
+    if (assignment.vehicleId) {
+      // CF-86: assignScheduledTripDriver deja la reserva driver_assigned directamente
+      await assignScheduledTripDriverCallable({
+        scheduledTripId: schedId,
+        driverId: assignment.driverId,
+        vehicleId: assignment.vehicleId,
+        reason:
+          assignment.reason ||
+          "Asignación directa desde consola de operaciones SuperAdmin Lilo",
+      });
+    } else {
+      await offerScheduledTripCallable({
+        scheduledTripId: schedId,
+        driverId: assignment.driverId,
+      });
     }
-  } catch (dispatchErr: any) {
-    console.warn(
-      "[requestService] Dispatch callable note (mirroring to b2bRequests):",
-      dispatchErr?.message || dispatchErr
-    );
+  } else if (targetTripId) {
+    if (reqDoc?.assignedDriverId && reqDoc.assignedDriverId !== assignment.driverId) {
+      await reassignDriverCallable({
+        tripId: targetTripId,
+        driverId: assignment.driverId,
+        reason: assignment.reason || "Reasignación desde consola de despacho",
+      });
+    } else {
+      await assignDriverCallable({
+        tripId: targetTripId,
+        driverId: assignment.driverId,
+        reason: assignment.reason,
+      });
+    }
   }
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
@@ -374,7 +367,7 @@ export const assignB2BRequestVehicleAndDriver = async (
       updatedAt: serverTimestamp(),
     });
   } catch {
-    // Actualizado en memoria
+    // Espejo b2bRequests opcional; la fuente oficial es scheduledTrips/trips en backend
   }
 };
 
@@ -393,21 +386,19 @@ export const ensureAuthenticated = async () => {
   }
 };
 
+const isNotFoundCallableError = (err: any): boolean => {
+  const code = String(err?.code || "").toLowerCase();
+  return code === "functions/not-found" || code === "not-found";
+};
+
 export const updateB2BRequestStatus = async (
   requestId: string,
   status: B2BRequestStatus,
   notes?: string,
   driverId?: string,
-  vehicleId?: string
+  _vehicleId?: string
 ): Promise<void> => {
   await ensureAuthenticated();
-
-  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
-    r.id === requestId || r.folio === requestId
-      ? { ...r, status, notes: notes ?? r.notes }
-      : r
-  );
-  notifyRequestSubscribers();
 
   const targetReq = currentFirestoreDocs.find(
     (r) => r.id === requestId || r.folio === requestId
@@ -416,119 +407,113 @@ export const updateB2BRequestStatus = async (
     targetReq?.tripId ||
     (targetReq as any)?.scheduledTripId ||
     requestId;
-  const resolvedDriverId = driverId || targetReq?.assignedDriverId || "ZFpZfYKfuSf0T0c04wqnBNknkiw2";
-  const resolvedVehicleId = vehicleId || targetReq?.assignedVehicleId || "veh_sv_rav4_01";
+  const resolvedDriverId = driverId || targetReq?.assignedDriverId;
 
-  try {
-    // 1. Intento oficial mediante callable administrativo con registro auditado
-    await platformSetRideStatusCallable({
-      tripId: resolvedTripId,
-      targetStatus: status,
-      reason: notes || "Actualización operativa desde consola SuperAdmin Lilo",
-      driverId: resolvedDriverId,
-      vehicleId: resolvedVehicleId,
-    });
-  } catch (error: any) {
-    console.warn("[updateB2BRequestStatus] platformSetRideStatusCallable note, ejecutando transición con callables oficiales:", error?.message || error);
-    if (status === "enRoute") {
-      try {
-        await dispatchScheduledTripCallable({ scheduledTripId: resolvedTripId });
-      } catch (e) {
-        console.warn("[updateB2BRequestStatus] dispatchScheduledTrip error:", e);
-      }
-    } else if (status === "driverArrived") {
-      try {
-        await notifyClientDriverArrivedCallable({
-          rideId: resolvedTripId,
-          driverId: resolvedDriverId,
-          clientId: resolvedDriverId,
-          pickupAddress: targetReq?.origin?.address,
-          driverName: targetReq?.assignedDriverName || "Juan Perez",
-          driverVehicle: targetReq?.assignedVehiclePlate || "P123-456",
-        });
-      } catch (e) {
-        console.warn("[updateB2BRequestStatus] notifyClientDriverArrived error:", e);
-      }
-    } else if (status === "inService") {
-      try {
-        await startTripCallable({ rideId: resolvedTripId });
-      } catch (e) {
-        console.warn("[updateB2BRequestStatus] startTrip error:", e);
-      }
-    } else if (status === "completed") {
-      try {
-        await completeRideCallable({ rideId: resolvedTripId });
-      } catch (e) {
-        try {
-          await completeTripCallable({ tripId: resolvedTripId });
-        } catch (e2) {
-          console.warn("[updateB2BRequestStatus] completeRideCallable fallback error:", e2);
-        }
-      }
-    } else if (status === "cancelled") {
-      try {
-        await cancelScheduledTripCallable({
-          scheduledTripId: resolvedTripId,
-          reason: notes || "Cancelación desde consola SuperAdmin Lilo",
-        });
-      } catch {
-        try {
-          await cancelTripCallable({
-            rideId: resolvedTripId,
-            reason: notes || "Cancelación desde consola SuperAdmin Lilo",
-          });
-        } catch (e2) {
-          console.warn("[updateB2BRequestStatus] cancelTripCallable fallback error:", e2);
-        }
-      }
+  // Callables oficiales 9731da6 (CF-87: nunca ocultar errores ni simular éxito local)
+  if (status === "enRoute") {
+    await dispatchScheduledTripCallable({ scheduledTripId: resolvedTripId });
+  } else if (status === "driverArrived") {
+    await markDriverArrivedCallable({ rideId: resolvedTripId });
+    const clientId = targetReq?.requestedByUid;
+    if (resolvedDriverId && clientId && clientId !== resolvedDriverId) {
+      notifyClientDriverArrivedCallable({
+        rideId: resolvedTripId,
+        driverId: resolvedDriverId,
+        clientId,
+        pickupAddress: targetReq?.origin?.address,
+        driverName: targetReq?.assignedDriverName,
+        driverVehicle: targetReq?.assignedVehiclePlate,
+      }).catch((e) =>
+        console.warn("[updateB2BRequestStatus] notifyClientDriverArrived note:", e)
+      );
     }
+  } else if (status === "inService") {
+    await startTripCallable({ rideId: resolvedTripId });
+  } else if (status === "completed") {
+    try {
+      await completeRideCallable({ rideId: resolvedTripId });
+    } catch (err: any) {
+      if (!isNotFoundCallableError(err)) throw err;
+      await completeTripCallable({ tripId: resolvedTripId });
+    }
+  } else if (status === "cancelled") {
+    const reason = notes || "Cancelación desde consola SuperAdmin Lilo";
+    try {
+      await cancelScheduledTripCallable({
+        scheduledTripId: resolvedTripId,
+        reason,
+      });
+    } catch (err: any) {
+      if (!isNotFoundCallableError(err)) throw err;
+      await cancelTripCallable({ rideId: resolvedTripId, reason });
+    }
+  } else {
+    throw new Error(`Transición de estado no soportada por callables oficiales: ${status}`);
   }
+
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
+    r.id === requestId || r.folio === requestId || r.tripId === resolvedTripId
+      ? { ...r, status, notes: notes ?? r.notes }
+      : r
+  );
+  notifyRequestSubscribers();
 };
 
 /**
  * Cancela una reserva corporativa B2B liberando el saldo reservado o gastado del techo de la empresa
- * mediante la Cloud Function `cancelCompanyReservation` (CF-23 / LO-5.3).
+ * mediante callables oficiales 9731da6 (`cancelScheduledTrip` / `cancelTrip` / `cancelCompanyReservation`).
  */
 export const cancelB2BCompanyReservation = async (
   requestId: string,
   tripId?: string,
   notes?: string
 ): Promise<{ releasedAmount: number }> => {
+  await ensureAuthenticated();
+
   let releasedAmount = 0;
   const targetId = tripId || requestId;
+  const reason = notes || "Reserva corporativa cancelada por SuperAdmin";
+
   try {
     const res = await cancelScheduledTripCallable({
       scheduledTripId: targetId,
-      reason: notes || "Reserva corporativa cancelada por SuperAdmin",
+      reason,
     });
     releasedAmount = (res.data as any)?.releasedAmount ?? 0;
-  } catch {
+  } catch (err: any) {
+    if (!isNotFoundCallableError(err)) throw err;
     try {
-      const res = await cancelTripCallable({
-        rideId: targetId,
-        reason: notes || "Viaje cancelado por SuperAdmin",
-      });
-      releasedAmount = (res.data as any)?.releasedAmount ?? 0;
-    } catch {
-      try {
-        const res = await cancelCompanyReservationCallable({ tripId: targetId });
-        releasedAmount = res.data?.releasedAmount ?? 0;
-      } catch (e3) {
-        console.warn("[requestService] cancel fallbacks error:", e3);
-      }
+      await cancelTripCallable({ rideId: targetId, reason });
+    } catch (err2: any) {
+      if (!isNotFoundCallableError(err2)) throw err2;
+      const res = await cancelCompanyReservationCallable({ tripId: targetId });
+      releasedAmount = res.data?.releasedAmount ?? 0;
     }
   }
-  await updateB2BRequestStatus(
-    targetId,
-    "cancelled",
-    notes || "Reserva corporativa cancelada (saldo liberado del techo)."
+
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
+    r.id === requestId || r.folio === requestId || r.tripId === targetId
+      ? { ...r, status: "cancelled", notes: reason }
+      : r
   );
+  notifyRequestSubscribers();
+
+  try {
+    await updateDoc(doc(db, REQUESTS_COLLECTION, requestId), {
+      status: "cancelled",
+      notes: reason,
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Espejo b2bRequests opcional; el callable backend ya aplicó la cancelación oficial
+  }
+
   return { releasedAmount };
 };
 
 /**
- * Retira al conductor asignado de un viaje corporativo (`markDriverUnavailable`),
- * regresando el viaje a `seeking_driver` sin tocar el techo de consumo de la empresa (CF-23 / LO-5.3).
+ * Retira al conductor asignado de un viaje corporativo (`reportTripProblem` / `markDriverUnavailable`),
+ * regresando el viaje a `seeking_driver` sin tocar el techo de consumo de la empresa (CF-23 / CF-87).
  */
 export const withdrawB2BDriverAvailability = async (
   requestId: string,
@@ -536,23 +521,18 @@ export const withdrawB2BDriverAvailability = async (
   driverId?: string,
   reason?: string
 ): Promise<void> => {
-  if (tripId) {
-    try {
-      if (reason?.trim()) {
-        await reportTripProblemCallable({
-          tripId,
-          reason: reason.trim(),
-        });
-      } else {
-        await markDriverUnavailableCallable({ tripId, driverId });
-      }
-    } catch (err) {
-      console.warn("[requestService] reportTripProblem/markDriverUnavailable fallback:", err);
-    }
+  const targetTripId = tripId || requestId;
+  if (reason?.trim()) {
+    await reportTripProblemCallable({
+      tripId: targetTripId,
+      reason: reason.trim(),
+    });
+  } else {
+    await markDriverUnavailableCallable({ tripId: targetTripId, driverId });
   }
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
-    r.id === requestId
+    r.id === requestId || r.tripId === targetTripId
       ? {
           ...r,
           assignedDriverId: undefined,
@@ -578,7 +558,7 @@ export const withdrawB2BDriverAvailability = async (
       updatedAt: serverTimestamp(),
     });
   } catch {
-    // Actualizado en memoria
+    // Espejo b2bRequests opcional; el callable backend ya aplicó el cambio oficial
   }
 };
 
@@ -591,23 +571,19 @@ export const reportB2BTripProblem = async (
   tripId: string,
   reason: string,
   coords?: { latitude?: number; longitude?: number },
-  previousDriverId?: string
+  _previousDriverId?: string
 ): Promise<void> => {
   const cleanReason = reason.trim();
   if (!cleanReason || cleanReason.length > 500) {
     throw new Error("El motivo del reporte es obligatorio (1 a 500 caracteres).");
   }
 
-  try {
-    await reportTripProblemCallable({
-      tripId,
-      reason: cleanReason,
-      ...(typeof coords?.latitude === "number" ? { latitude: coords.latitude } : {}),
-      ...(typeof coords?.longitude === "number" ? { longitude: coords.longitude } : {}),
-    });
-  } catch (err) {
-    console.warn("[requestService] reportTripProblemCallable note:", err);
-  }
+  await reportTripProblemCallable({
+    tripId,
+    reason: cleanReason,
+    ...(typeof coords?.latitude === "number" ? { latitude: coords.latitude } : {}),
+    ...(typeof coords?.longitude === "number" ? { longitude: coords.longitude } : {}),
+  });
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId || r.tripId === tripId
@@ -638,7 +614,7 @@ export const reportB2BTripProblem = async (
       updatedAt: serverTimestamp(),
     });
   } catch {
-    // Actualizado en memoria
+    // Espejo b2bRequests opcional; el callable backend ya reportó el problema
   }
 };
 
@@ -663,15 +639,11 @@ export const reassignB2BTripDriver = async (
     throw new Error("El motivo de reasignación es obligatorio (1 a 500 caracteres).");
   }
 
-  try {
-    await reassignTripDriverCallable({
-      tripId: assignment.tripId,
-      driverId: assignment.driverId,
-      reason: cleanReason,
-    });
-  } catch (err) {
-    console.warn("[requestService] reassignTripDriverCallable note:", err);
-  }
+  await reassignTripDriverCallable({
+    tripId: assignment.tripId,
+    driverId: assignment.driverId,
+    reason: cleanReason,
+  });
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
     r.id === requestId || r.tripId === assignment.tripId
@@ -702,7 +674,7 @@ export const reassignB2BTripDriver = async (
       updatedAt: serverTimestamp(),
     });
   } catch {
-    // Actualizado en memoria
+    // Espejo b2bRequests opcional; el callable backend ya reasignó al conductor
   }
 };
 

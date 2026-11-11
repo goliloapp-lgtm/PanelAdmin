@@ -1318,25 +1318,23 @@ export const reassignTripDriverCallable = httpsCallable<
   ReassignTripDriverResponse
 >(functions, "reassignTripDriver");
 
-export interface PlatformSetRideStatusParams {
-  tripId: string;
-  targetStatus: string;
-  reason: string;
-  driverId?: string;
-  vehicleId?: string;
+// --- markDriverArrived (callable oficial 9731da6 para llegada a origen) ---
+export interface MarkDriverArrivedParams {
+  rideId: string;
 }
 
-export interface PlatformSetRideStatusResponse {
-  success: boolean;
-  tripId: string;
-  status: string;
-  updatedAt: number;
+export interface MarkDriverArrivedResponse {
+  rideId: string;
+  status: "driver_arrived";
+  driverId: string;
+  arrivedAt: string;
+  idempotent?: boolean;
 }
 
-export const platformSetRideStatusCallable = httpsCallable<
-  PlatformSetRideStatusParams,
-  PlatformSetRideStatusResponse
->(functions, "platformSetRideStatus");
+export const markDriverArrivedCallable = httpsCallable<
+  MarkDriverArrivedParams,
+  MarkDriverArrivedResponse
+>(functions, "markDriverArrived");
 
 
 

@@ -158,6 +158,13 @@ export function formatFriendlyError(
 
   // 11. Permisos
   if (
+    combined.includes("only the assigned driver") ||
+    combined.includes("assigned driver only")
+  ) {
+    return "Solo el conductor asignado desde la App Driver puede ejecutar esta transición del viaje.";
+  }
+
+  if (
     combined.includes("permission-denied") ||
     combined.includes("insufficient permissions") ||
     combined.includes("[403]")
