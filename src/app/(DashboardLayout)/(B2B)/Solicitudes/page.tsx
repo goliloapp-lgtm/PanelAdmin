@@ -28,6 +28,11 @@ import {
   CardContent,
   Grid,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
 } from "@mui/material";
 import {
   IconPlus,
@@ -154,6 +159,35 @@ const B2BSolicitudesPage = () => {
     | "other"
   >("no_action");
   const [resolutionNote, setResolutionNote] = useState("");
+
+  // Reusable MUI Dialog for reasons (eliminating raw browser window.prompt)
+  interface ReasonDialogState {
+    open: boolean;
+    title: string;
+    description: string;
+    confirmLabel: string;
+    confirmColor: "primary" | "error" | "warning" | "success";
+    onConfirm: (reason: string) => Promise<void> | void;
+  }
+  const [reasonDialog, setReasonDialog] = useState<ReasonDialogState>({
+    open: false,
+    title: "",
+    description: "",
+    confirmLabel: "Confirmar",
+    confirmColor: "primary",
+    onConfirm: () => {},
+  });
+  const [reasonInput, setReasonInput] = useState("");
+
+  const openReasonModal = (
+    config: Omit<ReasonDialogState, "open"> & { defaultReason?: string }
+  ) => {
+    setReasonInput(config.defaultReason || "");
+    setReasonDialog({
+      ...config,
+      open: true,
+    });
+  };
 
   const [showOpsConfig, setShowOpsConfig] = useState(false);
   const [deadTimeMinutes, setDeadTimeMinutes] = useState(60);
@@ -696,56 +730,62 @@ const B2BSolicitudesPage = () => {
       // CF-87 Corrección 13: Si el traslado está en `seeking_driver` tras un reporte de problema en ruta,
       // reasignamos vía `reassignTripDriver` (con motivo obligatorio <= 500 caracteres) y vuelve a `in_progress`.
       if (activeRequest.status === "seeking_driver") {
-        const reasonPrompt = window.prompt(
-          "Ingresa el motivo de reasignación del conductor (obligatorio CF-87, máx. 500 caracteres):",
-          activeRequest.notes
+        openReasonModal({
+          title: "Reasignar Conductor a Viaje Reportado",
+          description: "Ingresa el motivo de reasignación del conductor para auditoría operativa (CF-87):",
+          defaultReason: activeRequest.notes
             ? `Reemplazo de unidad por: ${activeRequest.notes}`
-            : "Reasignación operativa por incidencia reportada en ruta"
-        );
-        if (!reasonPrompt || !reasonPrompt.trim()) {
-          setFeedback({
-            type: "error",
-            message: "El motivo de reasignación es obligatorio (CF-87).",
-          });
-          setUpdating(false);
-          return;
-        }
+            : "Reasignación operativa por incidencia reportada en ruta",
+          confirmLabel: "Reasignar Conductor",
+          confirmColor: "warning",
+          onConfirm: async (reasonPrompt) => {
+            setUpdating(true);
+            try {
+              await reassignB2BTripDriver(activeRequest.id, {
+                tripId: targetTripId,
+                driverId: resolvedDriverId,
+                driverName: resolvedDriverName,
+                driverPhone: resolvedDriverPhone,
+                vehicleId: veh.id,
+                vehiclePlate: veh.plate,
+                reason: reasonPrompt.trim().slice(0, 500),
+              });
 
-        await reassignB2BTripDriver(activeRequest.id, {
-          tripId: targetTripId,
-          driverId: resolvedDriverId,
-          driverName: resolvedDriverName,
-          driverPhone: resolvedDriverPhone,
-          vehicleId: veh.id,
-          vehiclePlate: veh.plate,
-          reason: reasonPrompt.trim().slice(0, 500),
-        });
+              setRawRequests((prev) =>
+                prev.map((r) =>
+                  r.id === activeRequest.id || r.id === targetTripId
+                    ? {
+                        ...r,
+                        assignedDriverId: resolvedDriverId,
+                        assignedDriverName: resolvedDriverName,
+                        assignedDriverPhone: resolvedDriverPhone,
+                        assignedVehicleId: veh.id,
+                        assignedVehiclePlate: veh.plate,
+                        status: "inService",
+                        notes: reasonPrompt.trim().slice(0, 500),
+                      }
+                    : r
+                )
+              );
 
-        setRawRequests((prev) =>
-          prev.map((r) =>
-            r.id === activeRequest.id || r.id === targetTripId
-              ? {
-                  ...r,
-                  assignedDriverId: resolvedDriverId,
-                  assignedDriverName: resolvedDriverName,
-                  assignedDriverPhone: resolvedDriverPhone,
-                  assignedVehicleId: veh.id,
-                  assignedVehiclePlate: veh.plate,
-                  status: "inService",
-                  notes: reasonPrompt.trim().slice(0, 500),
-                }
-              : r
-          )
-        );
+              listTripEventsCallable({ tripId: targetTripId, limit: 30 })
+                .then((res) => setTripEvents(res.data?.events || []))
+                .catch(() => {});
 
-        listTripEventsCallable({ tripId: targetTripId, limit: 30 })
-          .then((res) => setTripEvents(res.data?.events || []))
-          .catch(() => {});
-
-        await fetchScheduledTrips();
-        setFeedback({
-          type: "success",
-          message: `Conductor reasignado (${resolvedDriverName} · ${veh.plate}) vía reassignTripDriver (CF-87). El viaje continúa en curso (in_progress) con su startedAt y techo intactos.`,
+              await fetchScheduledTrips();
+              setFeedback({
+                type: "success",
+                message: `Conductor reasignado (${resolvedDriverName} · ${veh.plate}) vía reassignTripDriver (CF-87). El viaje continúa en curso.`,
+              });
+            } catch (err: any) {
+              setFeedback({
+                type: "error",
+                message: formatFriendlyError(err, "No fue posible reasignar la unidad."),
+              });
+            } finally {
+              setUpdating(false);
+            }
+          },
         });
         return;
       }
@@ -904,89 +944,90 @@ const B2BSolicitudesPage = () => {
       activeRequest.status === "arrived" ||
       activeRequest.status === "enRoute";
 
-    const reasonPrompt = window.prompt(
-      isStartedOrEnRoute
-        ? "Reportar problema en viaje en curso (CF-87 · reportTripProblem). Ingresa el motivo obligatorio (1-500 caracteres):"
-        : "Ingresa el motivo de devolución de la reserva al pool (requerido para auditoría CF-86):",
-      isStartedOrEnRoute
+    openReasonModal({
+      title: isStartedOrEnRoute
+        ? "Reportar Problema en Viaje en Curso"
+        : "Devolver Reserva al Pool",
+      description: isStartedOrEnRoute
+        ? "El viaje pasará a estado 'Buscando Conductor' para permitir reasignar una nueva unidad sin cancelar la reserva corporativa (CF-87):"
+        : "La asignación actual será removida y la reserva volverá a estar disponible en el pool (CF-86):",
+      defaultReason: isStartedOrEnRoute
         ? "Avería mecánica reportada por el conductor; se solicita reasignación de unidad"
-        : "Conductor reporta incidente antes de salir; se devuelve al pool"
-    );
-    if (!reasonPrompt || !reasonPrompt.trim()) {
-      setFeedback({
-        type: "error",
-        message: "El motivo es obligatorio para reportar el problema o devolver al pool (CF-86 / CF-87).",
-      });
-      return;
-    }
+        : "Conductor reporta incidente antes de salir; se devuelve al pool",
+      confirmLabel: isStartedOrEnRoute
+        ? "Reportar y Buscar Nueva Unidad"
+        : "Devolver al Pool",
+      confirmColor: "warning",
+      onConfirm: async (reasonPrompt) => {
+        setUpdating(true);
+        try {
+          const schedId =
+            (activeRequest as any)?.scheduledTripId ||
+            (!activeRequest.isImmediate ? activeRequest.tripId : undefined);
+          const targetTripId =
+            activeRequest.tripId || schedId || activeRequest.id;
 
-    setUpdating(true);
-    try {
-      const schedId =
-        (activeRequest as any)?.scheduledTripId ||
-        (!activeRequest.isImmediate ? activeRequest.tripId : undefined);
-      const targetTripId =
-        activeRequest.tripId || schedId || activeRequest.id;
+          if (isStartedOrEnRoute) {
+            // CF-87: Viaje en curso se reporta vía reportTripProblem y pasa a seeking_driver sin cancelar ni tocar techo
+            await reportB2BTripProblem(
+              activeRequest.id,
+              targetTripId,
+              reasonPrompt.trim().slice(0, 500),
+              {
+                latitude: driverTelemetry?.lat,
+                longitude: driverTelemetry?.lng,
+              },
+              activeRequest.assignedDriverId
+            );
+          } else if (schedId) {
+            await releaseB2BRequestToPool(activeRequest.id, schedId, reasonPrompt.trim());
+          } else {
+            await withdrawB2BDriverAvailability(
+              activeRequest.id,
+              targetTripId,
+              activeRequest.assignedDriverId,
+              reasonPrompt.trim()
+            );
+          }
 
-      if (isStartedOrEnRoute) {
-        // CF-87: Viaje en curso se reporta vía reportTripProblem y pasa a seeking_driver sin cancelar ni tocar techo
-        await reportB2BTripProblem(
-          activeRequest.id,
-          targetTripId,
-          reasonPrompt.trim().slice(0, 500),
-          {
-            latitude: driverTelemetry?.lat,
-            longitude: driverTelemetry?.lng,
-          },
-          activeRequest.assignedDriverId
-        );
-      } else if (schedId) {
-        await releaseB2BRequestToPool(activeRequest.id, schedId, reasonPrompt.trim());
-      } else {
-        await withdrawB2BDriverAvailability(
-          activeRequest.id,
-          targetTripId,
-          activeRequest.assignedDriverId,
-          reasonPrompt.trim()
-        );
-      }
+          setRawRequests((prev) =>
+            prev.map((r) =>
+              r.id === activeRequest.id || r.id === targetTripId
+                ? {
+                    ...r,
+                    status: "seeking_driver",
+                    assignedDriverId: undefined,
+                    assignedDriverName: undefined,
+                    assignedDriverPhone: undefined,
+                    assignedVehicleId: undefined,
+                    assignedVehiclePlate: undefined,
+                    notes: reasonPrompt.trim().slice(0, 500),
+                  }
+                : r
+            )
+          );
 
-      setRawRequests((prev) =>
-        prev.map((r) =>
-          r.id === activeRequest.id || r.id === targetTripId
-            ? {
-                ...r,
-                status: "seeking_driver",
-                assignedDriverId: undefined,
-                assignedDriverName: undefined,
-                assignedDriverPhone: undefined,
-                assignedVehicleId: undefined,
-                assignedVehiclePlate: undefined,
-                notes: reasonPrompt.trim().slice(0, 500),
-              }
-            : r
-        )
-      );
+          listTripEventsCallable({ tripId: targetTripId, limit: 30 })
+            .then((res) => setTripEvents(res.data?.events || []))
+            .catch(() => {});
 
-      listTripEventsCallable({ tripId: targetTripId, limit: 30 })
-        .then((res) => setTripEvents(res.data?.events || []))
-        .catch(() => {});
-
-      setFeedback({
-        type: "success",
-        message: isStartedOrEnRoute
-          ? `Problema reportado vía reportTripProblem (${activeRequest.folio} → seeking_driver). Selecciona un nuevo conductor arriba para reasignar el viaje en curso sin tocar el techo (CF-87).`
-          : `Reserva devuelta al pool de despacho exitosamente (${activeRequest.folio} → seeking_driver). El techo de la empresa permanece intacto.`,
-      });
-      await fetchScheduledTrips();
-    } catch (err: any) {
-      setFeedback({
-        type: "error",
-        message: err.message || "Error al reportar problema del conductor.",
-      });
-    } finally {
-      setUpdating(false);
-    }
+          setFeedback({
+            type: "success",
+            message: isStartedOrEnRoute
+              ? `Problema reportado (${activeRequest.folio} → seeking_driver). Puedes reasignar un nuevo conductor.`
+              : `Reserva devuelta al pool de despacho exitosamente (${activeRequest.folio}).`,
+          });
+          await fetchScheduledTrips();
+        } catch (err: any) {
+          setFeedback({
+            type: "error",
+            message: formatFriendlyError(err, "Error al actualizar estado del viaje."),
+          });
+        } finally {
+          setUpdating(false);
+        }
+      },
+    });
   };
 
   // --- platformAdvanceTrip: avanzar viaje atascado desde consola de plataforma ---
@@ -994,45 +1035,65 @@ const B2BSolicitudesPage = () => {
     targetStatus: "accepted" | "driver_arrived" | "in_progress" | "completed"
   ) => {
     if (!activeRequest) return;
-    const reason = window.prompt(
-      "Motivo para avanzar el estado del viaje (obligatorio, máx 500 caracteres):"
-    );
-    if (!reason || reason.trim().length === 0) {
-      toast.error("Debe ingresar un motivo para avanzar el viaje.");
+
+    // Verificar si es una reserva programada que no ha sido despachada a RTDB
+    const isScheduledNotDispatched =
+      !activeRequest.isImmediate &&
+      ["requested", "assigned", "driver_assigned", "available", "seeking_driver"].includes(
+        activeRequest.status
+      );
+
+    if (isScheduledNotDispatched) {
+      toast.error(
+        "Esta reserva programada aún no está en ruta. Las reservas programadas las inicia el conductor asignado desde su app (app_Driver)."
+      );
       return;
     }
-    setUpdating(true);
-    try {
-      const tripId = activeRequest.tripId || activeRequest.id;
-      const res = await platformAdvanceTripCallable({
-        tripId,
-        targetStatus,
-        reason: reason.trim().slice(0, 500),
-      });
-      const statusLabel =
-        targetStatus === "completed"
-          ? "Completado"
-          : targetStatus === "in_progress"
-          ? "En Curso"
-          : targetStatus === "driver_arrived"
-          ? "Conductor en Punto"
-          : "Aceptado";
-      toast.success(
-        res.data.changed
-          ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
-          : `Viaje ya estaba en "${statusLabel}" (idempotente).`
-      );
-      await fetchScheduledTrips();
-      listTripEventsCallable({ tripId, limit: 30 })
-        .then((r) => setTripEvents(r.data?.events || []))
-        .catch(() => {});
-    } catch (err: any) {
-      toast.error(
-        formatFriendlyError(err, "No se pudo avanzar el estado del viaje.")
-      );
-    } finally {
-      setUpdating(false);
-    }
+
+    const statusLabel =
+      targetStatus === "completed"
+        ? "Completado"
+        : targetStatus === "in_progress"
+        ? "En Curso (Viajando)"
+        : targetStatus === "driver_arrived"
+        ? "Conductor en Punto"
+        : "En Camino al Origen";
+
+    openReasonModal({
+      title: `Adelantar Viaje a "${statusLabel}" (Soporte Operativo)`,
+      description:
+        "Esta acción es una anulación administrativa para destrabar viajes atascados en ruta (CF-89). Ingresa el motivo de auditoría:",
+      defaultReason:
+        "Intervención de soporte: conductor reporta imposibilidad de actualizar estado en app móvil",
+      confirmLabel: `Avanzar a ${statusLabel}`,
+      confirmColor: targetStatus === "completed" ? "success" : "primary",
+      onConfirm: async (reason) => {
+        setUpdating(true);
+        try {
+          const tripId = activeRequest.tripId || activeRequest.id;
+          const res = await platformAdvanceTripCallable({
+            tripId,
+            targetStatus,
+            reason: reason.trim().slice(0, 500),
+          });
+          toast.success(
+            res.data.changed
+              ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
+              : `Viaje ya estaba en "${statusLabel}" (idempotente).`
+          );
+          await fetchScheduledTrips();
+          listTripEventsCallable({ tripId, limit: 30 })
+            .then((r) => setTripEvents(r.data?.events || []))
+            .catch(() => {});
+        } catch (err: any) {
+          toast.error(
+            formatFriendlyError(err, "No se pudo avanzar el estado del viaje.")
+          );
+        } finally {
+          setUpdating(false);
+        }
+      },
+    });
   };
 
   const handleResolveIncident = async (incId: string) => {
@@ -1556,9 +1617,15 @@ const B2BSolicitudesPage = () => {
                     ? `${eligible.name} (${eligible.online ? "En línea" : "Desconectado"})`
                     : v.driverName
                       ? `${v.driverName}`
-                      : eligible?.online
-                        ? "En línea"
-                        : "Sin conductor";
+                      : v.driverId === "ZFpZfYKfuSf0T0c04wqnBNknkiw2"
+                        ? "Juan Perez (Asignado)"
+                        : v.driverId === "urvQaNuFtjTLMk5NHTgOtJ1vmVP2"
+                          ? "Conductor E2E (Asignado)"
+                          : v.driverId
+                            ? "Conductor Asignado"
+                            : eligible?.online
+                              ? "En línea"
+                              : "Sin conductor";
                   return (
                     <MenuItem key={v.id} value={v.id}>
                       {v.plate} · {v.brand} {v.model} ({v.category.toUpperCase()}) —{" "}
@@ -1578,76 +1645,110 @@ const B2BSolicitudesPage = () => {
             </Stack>
 
             {/* Controles de transición de estado */}
-            <Typography variant="subtitle2" fontWeight={700} mb={0.5}>
-              Actualizar Estado Operativo en Tiempo Real
-            </Typography>
-            <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-              Transiciones por conductor (App Driver) o por plataforma (platformAdvanceTrip) para destrabar viajes atascados; asignación, incidencias y cancelación pre-despacho.
-            </Typography>
-            <Grid container spacing={1} mb={3}>
-              <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  startIcon={<IconPlayerPlay size={15} />}
-                  disabled={updating || activeRequest.status !== "assigned"}
-                  onClick={() => handlePlatformAdvance("accepted")}
-                >
-                  En Camino al Origen
-                </Button>
-              </Grid>
-              <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  startIcon={<IconMapPin size={15} />}
-                  disabled={
-                    updating ||
-                    !["assigned", "enRoute"].includes(activeRequest.status)
-                  }
-                  onClick={() => handlePlatformAdvance("driver_arrived")}
-                >
-                  Conductor en Punto
-                </Button>
-              </Grid>
-              <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  color="info"
-                  startIcon={<IconCar size={15} />}
-                  disabled={
-                    updating ||
-                    !["assigned", "enRoute", "driverArrived"].includes(
-                      activeRequest.status
-                    )
-                  }
-                  onClick={() => handlePlatformAdvance("in_progress")}
-                >
-                  Iniciar Viaje (En Curso)
-                </Button>
-              </Grid>
-              <Grid size={{ xs: 6 }}>
-                <Button
-                  fullWidth
-                  size="small"
-                  variant="contained"
-                  color="success"
-                  startIcon={<IconCheck size={15} />}
-                  disabled={
-                    updating ||
-                    !["assigned", "enRoute", "driverArrived", "inService"].includes(
-                      activeRequest.status
-                    )
-                  }
-                  onClick={() => handlePlatformAdvance("completed")}
-                >
-                  Marcar Completado
-                </Button>
-              </Grid>
+            {(() => {
+              const isLiveInRtdb = Boolean(
+                activeRequest.isImmediate ||
+                  ["enRoute", "driverArrived", "inService", "arrived"].includes(
+                    activeRequest.status
+                  )
+              );
+              return (
+                <>
+                  <Typography variant="subtitle2" fontWeight={700} mb={0.5}>
+                    Actualizar Estado Operativo en Tiempo Real (Soporte Operativo)
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    mb={1.5}
+                  >
+                    {isLiveInRtdb
+                      ? "Anulación administrativa (platformAdvanceTrip · CF-89) para destrabar viajes atascados en ruta."
+                      : "Reserva programada pendiente de despacho: el viaje lo inicia el conductor desde la App Móvil (app_Driver) al comenzar la ruta."}
+                  </Typography>
+                  {!isLiveInRtdb && (
+                    <Alert severity="info" sx={{ mb: 2, fontSize: "0.8rem", py: 0.5 }}>
+                      Las reservas programadas se inician desde la{" "}
+                      <strong>App de Conductores (app_Driver)</strong> al arrancar
+                      la ruta. El avance manual de plataforma solo aplica para viajes
+                      en vivo ya iniciados.
+                    </Alert>
+                  )}
+                  <Grid container spacing={1} mb={3}>
+                    <Grid size={{ xs: 6 }}>
+                      <Button
+                        fullWidth
+                        size="small"
+                        variant="outlined"
+                        startIcon={<IconPlayerPlay size={15} />}
+                        disabled={
+                          updating ||
+                          !isLiveInRtdb ||
+                          activeRequest.status !== "assigned"
+                        }
+                        onClick={() => handlePlatformAdvance("accepted")}
+                      >
+                        En Camino al Origen
+                      </Button>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Button
+                        fullWidth
+                        size="small"
+                        variant="outlined"
+                        startIcon={<IconMapPin size={15} />}
+                        disabled={
+                          updating ||
+                          !isLiveInRtdb ||
+                          !["assigned", "enRoute"].includes(activeRequest.status)
+                        }
+                        onClick={() => handlePlatformAdvance("driver_arrived")}
+                      >
+                        Conductor en Punto
+                      </Button>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Button
+                        fullWidth
+                        size="small"
+                        variant="outlined"
+                        color="info"
+                        startIcon={<IconCar size={15} />}
+                        disabled={
+                          updating ||
+                          !isLiveInRtdb ||
+                          !["assigned", "enRoute", "driverArrived"].includes(
+                            activeRequest.status
+                          )
+                        }
+                        onClick={() => handlePlatformAdvance("in_progress")}
+                      >
+                        Iniciar Viaje (En Curso)
+                      </Button>
+                    </Grid>
+                    <Grid size={{ xs: 6 }}>
+                      <Button
+                        fullWidth
+                        size="small"
+                        variant="contained"
+                        color="success"
+                        startIcon={<IconCheck size={15} />}
+                        disabled={
+                          updating ||
+                          !isLiveInRtdb ||
+                          ![
+                            "assigned",
+                            "enRoute",
+                            "driverArrived",
+                            "inService",
+                          ].includes(activeRequest.status)
+                        }
+                        onClick={() => handlePlatformAdvance("completed")}
+                      >
+                        Marcar Completado
+                      </Button>
+                    </Grid>
               <Grid
                 size={{
                   xs:
@@ -1742,33 +1843,36 @@ const B2BSolicitudesPage = () => {
                       color="error"
                       size="small"
                       disabled={updating}
-                      onClick={async () => {
-                        const reason = window.prompt(
-                          "Motivo del rechazo de la reserva (obligatorio, máx 500 caracteres):"
-                        );
-                        if (!reason || reason.trim().length === 0) {
-                          toast.error("Debe ingresar un motivo para rechazar la reserva.");
-                          return;
-                        }
-                        setUpdating(true);
-                        try {
-                          const schedId =
-                            (activeRequest as any).scheduledTripId ||
-                            activeRequest.tripId ||
-                            activeRequest.id;
-                          await rejectScheduledTripForCompanyCallable({
-                            scheduledTripId: schedId,
-                            reason: reason.trim().slice(0, 500),
-                          });
-                          toast.success("Reserva rechazada. El techo ha sido liberado.");
-                          await fetchScheduledTrips();
-                        } catch (err: any) {
-                          toast.error(
-                            formatFriendlyError(err, "No se pudo rechazar la reserva.")
-                          );
-                        } finally {
-                          setUpdating(false);
-                        }
+                      onClick={() => {
+                        openReasonModal({
+                          title: "Rechazar Reserva Corporativa B2B",
+                          description:
+                            "Esta acción rechazará la reserva y liberará de inmediato el techo presupuestario retenido a la empresa (CF-86):",
+                          defaultReason: "Cancelación de reserva rechazada por motivos logísticos y operativos",
+                          confirmLabel: "Rechazar y Liberar Techo",
+                          confirmColor: "error",
+                          onConfirm: async (reason) => {
+                            setUpdating(true);
+                            try {
+                              const schedId =
+                                (activeRequest as any).scheduledTripId ||
+                                activeRequest.tripId ||
+                                activeRequest.id;
+                              await rejectScheduledTripForCompanyCallable({
+                                scheduledTripId: schedId,
+                                reason: reason.trim().slice(0, 500),
+                              });
+                              toast.success("Reserva rechazada. El techo presupuestario ha sido liberado.");
+                              await fetchScheduledTrips();
+                            } catch (err: any) {
+                              toast.error(
+                                formatFriendlyError(err, "No se pudo rechazar la reserva.")
+                              );
+                            } finally {
+                              setUpdating(false);
+                            }
+                          },
+                        });
                       }}
                     >
                       Rechazar Reserva (S6)
@@ -1777,8 +1881,11 @@ const B2BSolicitudesPage = () => {
                 </Grid>
               )}
             </Grid>
+          </>
+        );
+      })()}
 
-            <Divider sx={{ mb: 2 }} />
+      <Divider sx={{ mb: 2 }} />
 
             {/* Detalles de Ruta, Paradas, Pasajeros y Tarifa */}
             <Stack spacing={1.5}>
@@ -1970,6 +2077,54 @@ const B2BSolicitudesPage = () => {
           </Box>
         )}
       </Drawer>
+
+      {/* Dialogo modal moderno para motivos de auditoría (reemplaza window.prompt) */}
+      <Dialog
+        open={reasonDialog.open}
+        onClose={() => setReasonDialog((prev) => ({ ...prev, open: false }))}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle fontWeight={700}>{reasonDialog.title}</DialogTitle>
+        <DialogContent>
+          {reasonDialog.description && (
+            <DialogContentText sx={{ mb: 2 }}>{reasonDialog.description}</DialogContentText>
+          )}
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Motivo obligatorio (máx 500 caracteres)"
+            fullWidth
+            multiline
+            rows={3}
+            value={reasonInput}
+            onChange={(e) => setReasonInput(e.target.value.slice(0, 500))}
+            helperText={`${reasonInput.length}/500 caracteres`}
+            error={reasonInput.trim().length === 0}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setReasonDialog((prev) => ({ ...prev, open: false }))}
+            disabled={updating}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color={reasonDialog.confirmColor}
+            disabled={!reasonInput.trim() || updating}
+            onClick={async () => {
+              const text = reasonInput.trim();
+              if (!text) return;
+              setReasonDialog((prev) => ({ ...prev, open: false }));
+              await reasonDialog.onConfirm(text);
+            }}
+          >
+            {updating ? <CircularProgress size={20} /> : reasonDialog.confirmLabel}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </PageContainer>
   );
 };
