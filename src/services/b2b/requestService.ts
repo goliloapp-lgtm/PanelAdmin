@@ -10,7 +10,6 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { ref as rtdbRef, update as rtdbUpdate } from "firebase/database";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { db, rtdb, functions, auth } from "@/utils/firebase";
 import {
@@ -28,12 +27,10 @@ import {
   reassignDriverCallable,
   reportTripProblemCallable,
   reassignTripDriverCallable,
-  markDriverArrivedCallable,
-  completeRideCallable,
   completeTripCallable,
   dispatchScheduledTripCallable,
   notifyClientDriverArrivedCallable,
-  startTripCallable,
+  platformAdvanceTripCallable,
 } from "@/utils/functions";
 import {
   B2BRequestStatus,
@@ -404,21 +401,6 @@ export const assignB2BRequestVehicleAndDriver = async (
   }
 };
 
-export const ensureAuthenticated = async () => {
-  if (auth.currentUser) return auth.currentUser;
-  try {
-    const cred = await signInWithEmailAndPassword(
-      auth,
-      "lilousertest@gmail.com",
-      "LiloDriver2026!"
-    );
-    return cred.user;
-  } catch (e) {
-    console.warn("[requestService] ensureAuthenticated note:", e);
-    return null;
-  }
-};
-
 const isNotFoundCallableError = (err: any): boolean => {
   const code = String(err?.code || "").toLowerCase();
   return code === "functions/not-found" || code === "not-found";
@@ -431,7 +413,8 @@ export const updateB2BRequestStatus = async (
   driverId?: string,
   _vehicleId?: string
 ): Promise<void> => {
-  await ensureAuthenticated();
+  // No llamar ensureAuthenticated: el dashboard debe estar logueado como operador de plataforma
+  // con claim admin:true. Nunca como el conductor (CF-92).
 
   const targetReq = currentFirestoreDocs.find(
     (r) => r.id === requestId || r.folio === requestId
@@ -442,11 +425,20 @@ export const updateB2BRequestStatus = async (
     requestId;
   const resolvedDriverId = driverId || targetReq?.assignedDriverId;
 
-  // Callables oficiales 9731da6 (CF-87: nunca ocultar errores ni simular éxito local)
+  // CF-92: usar platformAdvanceTripCallable para avances de estado, NO los callables del conductor
+  // (startTrip, markDriverArrived, completeRide exigen rideRequests.driverId === uid → siempre 403 desde el dashboard)
+  const platformReason = notes?.trim() || "Avance operativo desde consola SuperAdmin Lilo (CF-92)";
+
   if (status === "enRoute") {
+    // "enRoute" = despacho de reserva programada → dispatchScheduledTrip crea nodo RTDB en "accepted"
     await dispatchScheduledTripCallable({ scheduledTripId: resolvedTripId });
   } else if (status === "driverArrived") {
-    await markDriverArrivedCallable({ rideId: resolvedTripId });
+    await platformAdvanceTripCallable({
+      tripId: resolvedTripId,
+      targetStatus: "driver_arrived",
+      reason: platformReason,
+    });
+    // Notificar al cliente (best-effort)
     const clientId = targetReq?.requestedByUid;
     if (resolvedDriverId && clientId && clientId !== resolvedDriverId) {
       notifyClientDriverArrivedCallable({
@@ -461,11 +453,20 @@ export const updateB2BRequestStatus = async (
       );
     }
   } else if (status === "inService") {
-    await startTripCallable({ rideId: resolvedTripId });
+    await platformAdvanceTripCallable({
+      tripId: resolvedTripId,
+      targetStatus: "in_progress",
+      reason: platformReason,
+    });
   } else if (status === "completed") {
     try {
-      await completeRideCallable({ rideId: resolvedTripId });
+      await platformAdvanceTripCallable({
+        tripId: resolvedTripId,
+        targetStatus: "completed",
+        reason: platformReason,
+      });
     } catch (err: any) {
+      // Fallback: si el nodo RTDB no existe, intentar completeTripCallable
       if (!isNotFoundCallableError(err)) throw err;
       await completeTripCallable({ tripId: resolvedTripId });
     }
@@ -501,8 +502,6 @@ export const cancelB2BCompanyReservation = async (
   tripId?: string,
   notes?: string
 ): Promise<{ releasedAmount: number }> => {
-  await ensureAuthenticated();
-
   let releasedAmount = 0;
   const targetId = tripId || requestId;
   const reason = notes || "Reserva corporativa cancelada por SuperAdmin";
