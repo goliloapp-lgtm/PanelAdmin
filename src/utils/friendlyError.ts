@@ -70,7 +70,22 @@ export function formatFriendlyError(
     combined.includes("costcenter") ||
     combined.includes("cost centre")
   ) {
-    return "Por favor selecciona un centro de costo válido para continuar.";
+    if (combined.includes("cost-centre-not-found") || combined.includes("does not hold")) {
+      return `El centro de costo seleccionado no existe en la empresa: ${rawMessage.replace(/Nothing was written\.?/gi, "").trim()}`;
+    }
+    if (combined.includes("cost-centre-id-required") || (combined.includes("holds") && combined.includes("documents"))) {
+      return "La empresa posee múltiples centros de costo. Por favor selecciona uno específico de la lista desplegable.";
+    }
+    if (combined.includes("window-not-current") || combined.includes("budgetwindowstart")) {
+      return `La ventana de facturación del centro de costo no está vigente para esta fecha: ${rawMessage.replace(/Nothing was written\.?/gi, "").trim()}`;
+    }
+    if (combined.includes("cost-centre-inactive")) {
+      return "El centro de costo seleccionado está inactivo o retirado.";
+    }
+    if (combined.includes("no-cost-centre") || combined.includes("no document")) {
+      return "La empresa seleccionada no tiene ningún centro de costo registrado en su expediente corporativo.";
+    }
+    return `Centro de costo inválido: ${rawMessage.replace(/Nothing was written\.?/gi, "").trim()}`;
   }
 
   // 6. Viajero corporativo requerido o inactivo

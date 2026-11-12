@@ -228,8 +228,8 @@ export const createB2BServiceRequest = async (
     }
 
     const cleanCostCentreId =
-      data.costCenterId && data.costCenterId !== "general"
-        ? String(data.costCenterId).trim()
+      typeof data.costCenterId === "string" && data.costCenterId.trim() !== ""
+        ? data.costCenterId.trim()
         : undefined;
 
     const sanitizedLegs = legs.map((leg) => ({

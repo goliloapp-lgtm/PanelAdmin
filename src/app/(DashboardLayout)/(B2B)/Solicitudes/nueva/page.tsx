@@ -82,9 +82,8 @@ const NuevaSolicitudB2BPage = () => {
       setErrorState(null);
       return;
     }
-    const clean = formatFriendlyError(msg);
-    setErrorState(clean);
-    toast.error(clean);
+    setErrorState(msg);
+    toast.error(msg);
   };
 
   // Backend quote state (getFareQuote callable)
@@ -342,6 +341,10 @@ const NuevaSolicitudB2BPage = () => {
       setError("Debes seleccionar un viajero registrado para la empresa.");
       return;
     }
+    if (costCenters.length > 0 && !costCenterId && !selectedCostCenter) {
+      setError("Por favor selecciona un centro de costo de la lista desplegable.");
+      return;
+    }
     if (
       costCenters.length > 1 &&
       (!costCenterId || !costCenters.some((c) => c.id === costCenterId))
@@ -444,7 +447,7 @@ const NuevaSolicitudB2BPage = () => {
         selectedCostCenter || (costCenters.length === 1 ? costCenters[0] : null);
       const effectiveCostCenterId =
         effectiveCostCenter?.id ||
-        (costCenterId && costCenterId !== "general" ? costCenterId : undefined);
+        (costCenterId && costCenterId.trim() !== "" ? costCenterId.trim() : undefined);
       const effectiveCostCenterName =
         effectiveCostCenter?.name || effectiveCostCenter?.department || "General Corporativo";
 
