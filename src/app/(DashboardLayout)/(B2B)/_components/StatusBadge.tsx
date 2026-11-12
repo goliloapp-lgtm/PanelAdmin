@@ -27,9 +27,10 @@ const companyStatusMap: Record<
 };
 
 const requestStatusMap: Record<
-  B2BRequestStatus,
+  string,
   { label: string; color: ChipProps["color"] }
 > = {
+  pending_approval: { label: "Pendiente Aprobación (S6)", color: "warning" },
   requested: { label: "Solicitada", color: "warning" },
   seeking_driver: { label: "Buscando Conductor", color: "warning" },
   confirmed: { label: "Confirmada", color: "info" },

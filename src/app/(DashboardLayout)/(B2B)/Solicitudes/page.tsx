@@ -65,7 +65,6 @@ import {
   listPlatformTripsCallable,
   writeTripHistoryCallable,
   platformAdvanceTripCallable,
-  dispatchScheduledTripCallable,
   approveScheduledTripForCompanyCallable,
   rejectScheduledTripForCompanyCallable,
 } from "@/utils/functions";
@@ -394,6 +393,7 @@ const B2BSolicitudesPage = () => {
         assignedVehicleId: isSeeking ? undefined : effectiveVehId,
         assignedVehiclePlate: vehiclePlate,
         status: mappedStatus,
+        rawStatus: effectiveRawStatus,
       };
     });
   }, [platformScheduledTrips, platformTrips, vehicles, companies]);
@@ -408,6 +408,7 @@ const B2BSolicitudesPage = () => {
       return {
         ...r,
         status: resolvedStatus,
+        rawStatus: (r as any).rawStatus || r.status,
         assignedDriverId: isSeeking
           ? undefined
           : r.assignedDriverId ?? veh?.driverId,
@@ -1073,44 +1074,17 @@ const B2BSolicitudesPage = () => {
             activeRequest.id;
           const tripId = activeRequest.tripId || schedId;
 
-          // Si no despachada → despachar primero para crear nodo RTDB
-          if (isScheduledNotDispatched && schedId) {
-            try {
-              await dispatchScheduledTripCallable({ scheduledTripId: schedId });
-            } catch (dispErr: any) {
-              const code: string = dispErr?.code || "";
-              // "failed-precondition" = fuera de ventana de despacho → ignorar,
-              // el nodo RTDB puede ya existir de un intento anterior.
-              // Cualquier otro error real → propagar.
-              if (
-                !code.includes("already") &&
-                !code.includes("failed-precondition") &&
-                !code.includes("already-dispatched")
-              ) {
-                throw dispErr;
-              }
-            }
-          }
-
-          // Si targetStatus === "accepted" y era no-despachada, el dispatch ya la puso
-          // en "accepted". Solo llamamos platformAdvanceTrip si necesita ir más allá
-          // o si ya estaba despachada.
-          if (targetStatus !== "accepted" || !isScheduledNotDispatched) {
-            const res = await platformAdvanceTripCallable({
-              tripId,
-              targetStatus,
-              reason: reason.trim().slice(0, 500),
-            });
-            toast.success(
-              res.data.changed
-                ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
-                : `Viaje ya estaba en "${statusLabel}" (idempotente).`
-            );
-          } else {
-            toast.success(
-              `Reserva despachada e iniciada como "${statusLabel}" correctamente.`
-            );
-          }
+          // CF-92: La plataforma avanza SIEMPRE vía platformAdvanceTrip (nunca callables de conductor como dispatchScheduledTrip)
+          const res = await platformAdvanceTripCallable({
+            tripId,
+            targetStatus,
+            reason: reason.trim().slice(0, 500),
+          });
+          toast.success(
+            res.data.changed
+              ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
+              : `Viaje ya estaba en "${statusLabel}" (idempotente).`
+          );
 
           await fetchScheduledTrips();
           listTripEventsCallable({ tripId, limit: 30 })
@@ -1531,7 +1505,14 @@ const B2BSolicitudesPage = () => {
                         </TableCell>
 
                         <TableCell align="center">
-                          <StatusBadge status={req.status} type="request" />
+                          <StatusBadge
+                            status={
+                              (req as any).rawStatus === "pending_approval"
+                                ? "pending_approval"
+                                : req.status
+                            }
+                            type="request"
+                          />
                         </TableCell>
 
                         <TableCell align="right">
@@ -1577,7 +1558,14 @@ const B2BSolicitudesPage = () => {
                   {activeRequest.costCenterName || "General"}
                 </Typography>
               </Box>
-              <StatusBadge status={activeRequest.status} type="request" />
+              <StatusBadge
+                status={
+                  (activeRequest as any).rawStatus === "pending_approval"
+                    ? "pending_approval"
+                    : activeRequest.status
+                }
+                type="request"
+              />
             </Stack>
 
             <Divider sx={{ mb: 2.5 }} />
@@ -1616,6 +1604,87 @@ const B2BSolicitudesPage = () => {
                 </Stepper>
               </CardContent>
             </Card>
+
+            {/* S6: Banner destacado si la reserva está pendiente de aprobación de cuatro ojos */}
+            {(activeRequest as any).rawStatus === "pending_approval" && (
+              <Alert severity="warning" sx={{ mb: 2.5 }}>
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Reserva pendiente de doble validación (S6)
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 1.5 }}>
+                  Esta reserva fue creada por excepción por plataforma. Requiere aprobación de un segundo administrador antes de entrar al pool o poder asignarle conductor.
+                </Typography>
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    variant="contained"
+                    color="success"
+                    size="small"
+                    disabled={updating}
+                    onClick={async () => {
+                      setUpdating(true);
+                      try {
+                        const schedId =
+                          (activeRequest as any).scheduledTripId ||
+                          activeRequest.tripId ||
+                          activeRequest.id;
+                        await approveScheduledTripForCompanyCallable({
+                          scheduledTripId: schedId,
+                        });
+                        toast.success("Reserva aprobada exitosamente y enviada al pool de conductores.");
+                        await fetchScheduledTrips();
+                      } catch (err: any) {
+                        toast.error(
+                          formatFriendlyError(err, "No se pudo aprobar la reserva.")
+                        );
+                      } finally {
+                        setUpdating(false);
+                      }
+                    }}
+                  >
+                    Aprobar Reserva (S6)
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    size="small"
+                    disabled={updating}
+                    onClick={() => {
+                      openReasonModal({
+                        title: "Rechazar Reserva Corporativa B2B",
+                        description:
+                          "Esta acción rechazará la reserva y liberará de inmediato el techo presupuestario retenido a la empresa (CF-86):",
+                        defaultReason: "Cancelación de reserva rechazada por motivos logísticos y operativos",
+                        confirmLabel: "Rechazar y Liberar Techo",
+                        confirmColor: "error",
+                        onConfirm: async (reason) => {
+                          setUpdating(true);
+                          try {
+                            const schedId =
+                              (activeRequest as any).scheduledTripId ||
+                              activeRequest.tripId ||
+                              activeRequest.id;
+                            await rejectScheduledTripForCompanyCallable({
+                              scheduledTripId: schedId,
+                              reason,
+                            });
+                            toast.success("Reserva rechazada y saldo retenido liberado.");
+                            await fetchScheduledTrips();
+                          } catch (err: any) {
+                            toast.error(
+                              formatFriendlyError(err, "No se pudo rechazar la reserva.")
+                            );
+                          } finally {
+                            setUpdating(false);
+                          }
+                        },
+                      });
+                    }}
+                  >
+                    Rechazar
+                  </Button>
+                </Stack>
+              </Alert>
+            )}
 
             {/* Asignación / Reasignación de Conductor + Unidad */}
             <Typography variant="subtitle2" fontWeight={700} mb={1}>
@@ -1668,7 +1737,11 @@ const B2BSolicitudesPage = () => {
               <Button
                 variant="contained"
                 color={activeRequest.status === "seeking_driver" ? "warning" : "primary"}
-                disabled={!selectedVehicleId || updating}
+                disabled={
+                  !selectedVehicleId ||
+                  updating ||
+                  (activeRequest as any).rawStatus === "pending_approval"
+                }
                 onClick={handleAssignVehicle}
               >
                 {activeRequest.status === "seeking_driver" ? "Reasignar" : "Asignar"}

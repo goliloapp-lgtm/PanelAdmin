@@ -182,12 +182,20 @@ export function formatFriendlyError(
     return "Tu sesión ha expirado. Por favor vuelve a iniciar sesión.";
   }
 
-  // 11. Permisos
+  // 11. Permisos y Doble Validación
+  if (
+    combined.includes("four eyes") ||
+    combined.includes("different administrator must approve") ||
+    combined.includes("cuatro ojos")
+  ) {
+    return "Por política de doble validación (cuatro ojos), esta reserva de plataforma debe ser aprobada por otro administrador diferente a quien la creó.";
+  }
+
   if (
     combined.includes("only the assigned driver") ||
     combined.includes("assigned driver only")
   ) {
-    return "Solo el conductor asignado desde la App Driver puede ejecutar esta transición del viaje.";
+    return "Solo el conductor asignado desde la App Driver puede ejecutar esta acción.";
   }
 
   if (
@@ -199,6 +207,13 @@ export function formatFriendlyError(
   }
 
   // 12. Registro no encontrado
+  if (
+    (combined.includes("riderequests") || combined.includes("rideRequests")) &&
+    (combined.includes("does not exist") || combined.includes("not-found"))
+  ) {
+    return "El viaje aún no existe en tiempo real (la reserva programada aún debe ser despachada por el conductor desde la App Driver).";
+  }
+
   if (
     combined.includes("not-found") ||
     combined.includes("does not exist") ||
