@@ -65,6 +65,7 @@ import {
   listPlatformTripsCallable,
   writeTripHistoryCallable,
   platformAdvanceTripCallable,
+  dispatchScheduledTripCallable,
   approveScheduledTripForCompanyCallable,
   rejectScheduledTripForCompanyCallable,
 } from "@/utils/functions";
@@ -1031,24 +1032,19 @@ const B2BSolicitudesPage = () => {
   };
 
   // --- platformAdvanceTrip: avanzar viaje atascado desde consola de plataforma ---
+  // CF-89: El operador SIEMPRE puede avanzar estados. Para reservas no despachadas
+  // se intenta despachar primero (crea nodo RTDB), luego se avanza el estado.
   const handlePlatformAdvance = async (
     targetStatus: "accepted" | "driver_arrived" | "in_progress" | "completed"
   ) => {
     if (!activeRequest) return;
 
-    // Verificar si es una reserva programada que no ha sido despachada a RTDB
+    // ¿Reserva programada aún no despachada al RTDB?
     const isScheduledNotDispatched =
       !activeRequest.isImmediate &&
       ["requested", "assigned", "driver_assigned", "available", "seeking_driver"].includes(
         activeRequest.status
       );
-
-    if (isScheduledNotDispatched) {
-      toast.error(
-        "Esta reserva programada aún no está en ruta. Las reservas programadas las inicia el conductor asignado desde su app (app_Driver)."
-      );
-      return;
-    }
 
     const statusLabel =
       targetStatus === "completed"
@@ -1061,8 +1057,9 @@ const B2BSolicitudesPage = () => {
 
     openReasonModal({
       title: `Adelantar Viaje a "${statusLabel}" (Soporte Operativo)`,
-      description:
-        "Esta acción es una anulación administrativa para destrabar viajes atascados en ruta (CF-89). Ingresa el motivo de auditoría:",
+      description: isScheduledNotDispatched
+        ? `Esta reserva programada aún no fue despachada. Se despachará primero para crear el viaje en tiempo real, luego se avanzará a "${statusLabel}" (anulación operativa CF-89). Ingresa el motivo:`
+        : "Anulación administrativa para destrabar viajes atascados en ruta (CF-89). Ingresa el motivo de auditoría:",
       defaultReason:
         "Intervención de soporte: conductor reporta imposibilidad de actualizar estado en app móvil",
       confirmLabel: `Avanzar a ${statusLabel}`,
@@ -1070,17 +1067,51 @@ const B2BSolicitudesPage = () => {
       onConfirm: async (reason) => {
         setUpdating(true);
         try {
-          const tripId = activeRequest.tripId || activeRequest.id;
-          const res = await platformAdvanceTripCallable({
-            tripId,
-            targetStatus,
-            reason: reason.trim().slice(0, 500),
-          });
-          toast.success(
-            res.data.changed
-              ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
-              : `Viaje ya estaba en "${statusLabel}" (idempotente).`
-          );
+          const schedId =
+            (activeRequest as any).scheduledTripId ||
+            activeRequest.tripId ||
+            activeRequest.id;
+          const tripId = activeRequest.tripId || schedId;
+
+          // Si no despachada → despachar primero para crear nodo RTDB
+          if (isScheduledNotDispatched && schedId) {
+            try {
+              await dispatchScheduledTripCallable({ scheduledTripId: schedId });
+            } catch (dispErr: any) {
+              const code: string = dispErr?.code || "";
+              // "failed-precondition" = fuera de ventana de despacho → ignorar,
+              // el nodo RTDB puede ya existir de un intento anterior.
+              // Cualquier otro error real → propagar.
+              if (
+                !code.includes("already") &&
+                !code.includes("failed-precondition") &&
+                !code.includes("already-dispatched")
+              ) {
+                throw dispErr;
+              }
+            }
+          }
+
+          // Si targetStatus === "accepted" y era no-despachada, el dispatch ya la puso
+          // en "accepted". Solo llamamos platformAdvanceTrip si necesita ir más allá
+          // o si ya estaba despachada.
+          if (targetStatus !== "accepted" || !isScheduledNotDispatched) {
+            const res = await platformAdvanceTripCallable({
+              tripId,
+              targetStatus,
+              reason: reason.trim().slice(0, 500),
+            });
+            toast.success(
+              res.data.changed
+                ? `Viaje avanzado a "${statusLabel}" vía platformAdvanceTrip.`
+                : `Viaje ya estaba en "${statusLabel}" (idempotente).`
+            );
+          } else {
+            toast.success(
+              `Reserva despachada e iniciada como "${statusLabel}" correctamente.`
+            );
+          }
+
           await fetchScheduledTrips();
           listTripEventsCallable({ tripId, limit: 30 })
             .then((r) => setTripEvents(r.data?.events || []))
@@ -1646,11 +1677,8 @@ const B2BSolicitudesPage = () => {
 
             {/* Controles de transición de estado */}
             {(() => {
-              const isLiveInRtdb = Boolean(
-                activeRequest.isImmediate ||
-                  ["enRoute", "driverArrived", "inService", "arrived"].includes(
-                    activeRequest.status
-                  )
+              const hasDriver = Boolean(
+                activeRequest.assignedDriverId || (activeRequest as any).driverId
               );
               return (
                 <>
@@ -1663,18 +1691,10 @@ const B2BSolicitudesPage = () => {
                     display="block"
                     mb={1.5}
                   >
-                    {isLiveInRtdb
-                      ? "Anulación administrativa (platformAdvanceTrip · CF-89) para destrabar viajes atascados en ruta."
-                      : "Reserva programada pendiente de despacho: el viaje lo inicia el conductor desde la App Móvil (app_Driver) al comenzar la ruta."}
+                    Transiciones por conductor (App Driver) o por plataforma
+                    (platformAdvanceTrip) para destrabar viajes atascados: asignación,
+                    incidencias y cancelación pre-despacho.
                   </Typography>
-                  {!isLiveInRtdb && (
-                    <Alert severity="info" sx={{ mb: 2, fontSize: "0.8rem", py: 0.5 }}>
-                      Las reservas programadas se inician desde la{" "}
-                      <strong>App de Conductores (app_Driver)</strong> al arrancar
-                      la ruta. El avance manual de plataforma solo aplica para viajes
-                      en vivo ya iniciados.
-                    </Alert>
-                  )}
                   <Grid container spacing={1} mb={3}>
                     <Grid size={{ xs: 6 }}>
                       <Button
@@ -1684,12 +1704,15 @@ const B2BSolicitudesPage = () => {
                         startIcon={<IconPlayerPlay size={15} />}
                         disabled={
                           updating ||
-                          !isLiveInRtdb ||
-                          activeRequest.status !== "assigned"
+                          ![
+                            "assigned",
+                            "driver_assigned",
+                            "enRoute",
+                          ].includes(activeRequest.status)
                         }
                         onClick={() => handlePlatformAdvance("accepted")}
                       >
-                        En Camino al Origen
+                        En Camino Al Origen
                       </Button>
                     </Grid>
                     <Grid size={{ xs: 6 }}>
@@ -1700,12 +1723,16 @@ const B2BSolicitudesPage = () => {
                         startIcon={<IconMapPin size={15} />}
                         disabled={
                           updating ||
-                          !isLiveInRtdb ||
-                          !["assigned", "enRoute"].includes(activeRequest.status)
+                          ![
+                            "assigned",
+                            "driver_assigned",
+                            "enRoute",
+                            "driverArrived",
+                          ].includes(activeRequest.status)
                         }
                         onClick={() => handlePlatformAdvance("driver_arrived")}
                       >
-                        Conductor en Punto
+                        Conductor En Punto
                       </Button>
                     </Grid>
                     <Grid size={{ xs: 6 }}>
@@ -1717,10 +1744,13 @@ const B2BSolicitudesPage = () => {
                         startIcon={<IconCar size={15} />}
                         disabled={
                           updating ||
-                          !isLiveInRtdb ||
-                          !["assigned", "enRoute", "driverArrived"].includes(
-                            activeRequest.status
-                          )
+                          ![
+                            "assigned",
+                            "driver_assigned",
+                            "enRoute",
+                            "driverArrived",
+                            "inService",
+                          ].includes(activeRequest.status)
                         }
                         onClick={() => handlePlatformAdvance("in_progress")}
                       >
@@ -1736,9 +1766,9 @@ const B2BSolicitudesPage = () => {
                         startIcon={<IconCheck size={15} />}
                         disabled={
                           updating ||
-                          !isLiveInRtdb ||
                           ![
                             "assigned",
+                            "driver_assigned",
                             "enRoute",
                             "driverArrived",
                             "inService",
