@@ -88,6 +88,23 @@ import {
   LIFECYCLE_STEPS,
 } from "@/utils/tripStatus";
 
+/**
+ * F4 — El estado CRUDO de la reserva viaja junto al normalizado.
+ *
+ * El panel de decisión de una reserva heredada no puede leer `status`: `status` es el
+ * estado normalizado por `mapRawTripStatus`, que convierte `pending_approval` en
+ * `requested` (`src/utils/tripStatus.ts:96-97`). Sin el estado tal como lo devuelve el
+ * backend, una reserva que quedó pendiente antes del cambio de contrato (CF-90) se ve
+ * igual que una solicitud nueva y no hay forma de resolverla desde el panel.
+ *
+ * Las reservas NUEVAS ya no nacen `pending_approval`: nacen `available`. El panel de
+ * decisión existe sólo para las heredadas.
+ */
+type B2BServiceRequestWithRawStatus = B2BServiceRequest & {
+  /** Estado tal como lo devuelve el backend; nunca pasa por `mapRawTripStatus`. */
+  rawStatus: string;
+};
+
 const B2BSolicitudesPage = () => {
   const router = useRouter();
   const [rawRequests, setRawRequests] = useState<B2BServiceRequest[]>([]);
@@ -261,7 +278,7 @@ const B2BSolicitudesPage = () => {
     };
   }, []);
 
-  const mappedScheduledRequests = useMemo<B2BServiceRequest[]>(() => {
+  const mappedScheduledRequests = useMemo<B2BServiceRequestWithRawStatus[]>(() => {
     return platformScheduledTrips.map((st) => {
       const liveTrip = platformTrips.find(
         (t) => t.tripId === st.scheduledTripId || t.tripId === (st as any).id
@@ -366,13 +383,14 @@ const B2BSolicitudesPage = () => {
         assignedDriverPhone: driverPhone,
         assignedVehicleId: isSeeking ? undefined : effectiveVehId,
         assignedVehiclePlate: vehiclePlate,
+        rawStatus: String(effectiveRawStatus ?? ""),
         status: mappedStatus,
       };
     });
   }, [platformScheduledTrips, platformTrips, vehicles, companies]);
 
-  const requests = useMemo<B2BServiceRequest[]>(() => {
-    const list: B2BServiceRequest[] = rawRequests.map((r) => {
+  const requests = useMemo<B2BServiceRequestWithRawStatus[]>(() => {
+    const list: B2BServiceRequestWithRawStatus[] = rawRequests.map((r) => {
       const resolvedStatus = mapRawTripStatus(r.status);
       const isSeeking =
         resolvedStatus === "seeking_driver" || resolvedStatus === "requested";
@@ -380,6 +398,8 @@ const B2BSolicitudesPage = () => {
       const veh = vehicles.find((v) => v.id === effVehId);
       return {
         ...r,
+        // El estado del documento espejo ANTES de normalizarlo.
+        rawStatus: String(r.status ?? ""),
         status: resolvedStatus,
         assignedDriverId: isSeeking
           ? undefined
@@ -1654,12 +1674,25 @@ const B2BSolicitudesPage = () => {
                   </Grid>
                 )}
 
-              {/* S6: Aprobar/Rechazar reservas pending_approval */}
-              {((activeRequest as any).rawStatus === "pending_approval" ||
-                (activeRequest as any).status === "pending_approval") && (
+              {/* F4 — Reservas heredadas: sólo una reserva que quedó en `pending_approval` ANTES
+                  del cambio de contrato se resuelve acá. Las nuevas nacen `available` (CF-90) y no
+                  llevan aprobación, así que el panel no aparece para ellas. La condición lee el
+                  estado CRUDO (`rawStatus`): `status` es el normalizado, y `mapRawTripStatus`
+                  convierte `pending_approval` en `requested`, que es lo que dejaba este bloque
+                  inalcanzable. El backend, además, sólo aprueba o rechaza desde
+                  `pending_approval` (`assertPendingApprovalScheduledTrip`). */}
+              {activeRequest.rawStatus === "pending_approval" && (
                 <Grid size={{ xs: 12 }}>
-                  <Alert severity="info" sx={{ mb: 1 }}>
-                    Esta reserva fue creada por vía de excepción (S6) y requiere aprobación de un administrador diferente al creador (cuatro ojos).
+                  <Alert severity="warning" sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" fontWeight={700}>
+                      Reserva heredada: quedó en `pending_approval`
+                    </Typography>
+                    <Typography variant="caption" display="block">
+                      Esta reserva se creó antes del cambio de contrato. Las reservas nuevas
+                      ya nacen disponibles para el pool y no requieren aprobación; ésta sigue
+                      pendiente hasta que alguien la resuelva. El backend rechaza la decisión
+                      si la toma quien creó la reserva.
+                    </Typography>
                   </Alert>
                   <Stack direction="row" spacing={1}>
                     <Button
@@ -1688,7 +1721,7 @@ const B2BSolicitudesPage = () => {
                         }
                       }}
                     >
-                      Aprobar Reserva (S6)
+                      Aprobar Reserva Heredada
                     </Button>
                     <Button
                       variant="outlined"
@@ -1724,7 +1757,7 @@ const B2BSolicitudesPage = () => {
                         }
                       }}
                     >
-                      Rechazar Reserva (S6)
+                      Rechazar Reserva Heredada
                     </Button>
                   </Stack>
                 </Grid>

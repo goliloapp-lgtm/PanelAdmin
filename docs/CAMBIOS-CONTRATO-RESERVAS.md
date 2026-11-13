@@ -306,3 +306,120 @@ subcolección o sin red) y confirmar que el campo dice «No pudimos cargar los c
 no «no tiene centros»: el envío se bloquea por el primer motivo. Esta pantalla no tiene arnés de
 pruebas en el repo (no hay script `test`), así que la verificación es la de arriba más la
 inspección manual.
+
+## F4 — Reservas heredadas en `pending_approval`
+
+Fecha: 2026-11-12. Alcance: `frontend_Dashboard` — el panel de aprobación de la reserva en
+`/Solicitudes` (`src/app/(DashboardLayout)/(B2B)/Solicitudes/page.tsx`). Referencia: CF-90 (la
+reserva por excepción ya no nace pendiente) y
+`Backend/Firebase/docs/FOLLOWUPS/aprobacion-a-cuatro-ojos.md` (la puerta se retiró del alta; el
+código que la resuelve quedó desplegado para las reservas que ya estaban pendientes).
+
+### 1. Por qué el panel era código muerto
+
+El bloque que aprueba o rechaza una reserva existía, con sus botones y su aviso
+(`page.tsx:1657-1785`, antes del cambio), y su condición nunca fue verdadera:
+
+```tsx
+{((activeRequest as any).rawStatus === "pending_approval" ||
+  (activeRequest as any).status === "pending_approval") && (
+```
+
+| Lado de la condición | Por qué no podía coincidir |
+|---|---|
+| `rawStatus` | nadie lo escribía. `mappedScheduledRequests` (`page.tsx:264`, antes) mapeaba con `status: mappedStatus` y el espejo `b2bRequests` (`page.tsx:374`, antes) con `status: resolvedStatus`: el campo no existía en ninguna fila, así que `(activeRequest as any).rawStatus` era `undefined` |
+| `status` | es el estado **normalizado**. `mapRawTripStatus` convierte `pending_approval` en `requested` (`src/utils/tripStatus.ts:96-97`), así que el literal `"pending_approval"` nunca llegaba a la pantalla |
+
+Con las dos mitades falsas, el `Alert` y los dos botones no se montaban para ninguna reserva: las
+que quedaron pendientes antes del cambio de contrato se veían en la tabla como «Solicitada» y no
+había manera de aprobarlas ni rechazarlas desde el panel. La única salida era una llamada directa
+al backend.
+
+Que el estado crudo sea el criterio no es un detalle de presentación: `pending_approval` es el
+único estado desde el que las dos puertas de decisión escriben.
+`assertPendingApprovalScheduledTrip` (`Backend/Firebase/functions/src/b2b/scheduledTripStatus.ts:160`)
+se exige antes de escribir y otra vez dentro de la transacción, tanto al aprobar
+(`approveScheduledTripForCompany.ts:323` y `:347`) como al rechazar
+(`rejectScheduledTripForCompany.ts:147` y `:214`). Mostrar el panel en otro estado sólo produciría
+un `failed-precondition` del servidor.
+
+### 2. Qué se cambió
+
+**El estado crudo llega al objeto del panel.** Se agregó un tipo local
+`B2BServiceRequestWithRawStatus` (`page.tsx:91-106`), `B2BServiceRequest & { rawStatus: string }`,
+y los dos mapeos devuelven ese tipo:
+
+| Fuente de la fila | De dónde sale `rawStatus` | Se asigna en |
+|---|---|---|
+| `scheduledTrips` (`listPlatformScheduledTrips`, `page.tsx:203`, sin filtro de estado) | `effectiveRawStatus = liveTrip?.status \|\| st.status`, el mismo valor que consume `mapRawTripStatus` un renglón antes | `page.tsx:386`, junto a `status: mappedStatus` (`:387`) |
+| espejo `b2bRequests` (`subscribeToB2BRequests`) | `r.status` del documento, leído **antes** de reemplazarlo por el normalizado | `page.tsx:402`, junto a `status: resolvedStatus` (`:403`) |
+| reserva presente en las dos fuentes | la de `scheduledTrips`: el merge esparce `...sReq` sobre la fila del espejo | `page.tsx:433` |
+
+`rawStatus` se lee en un solo lugar, la condición del panel (`page.tsx:1684`). Todo el resto de la
+pantalla —la tabla, `StatusBadge`, el `Stepper` con `getLifecycleStepIndex`, el filtro por estado y
+los botones de avance— sigue leyendo `status`, que continúa siendo el normalizado. `src/types/b2b.ts`
+no se tocó: el campo es local del panel, así que ningún otro consumidor de `B2BServiceRequest` cambia.
+
+**La condición lee el estado crudo y sólo eso.** `activeRequest.rawStatus === "pending_approval"`
+(`page.tsx:1684`). Desaparece la mitad `status` y desaparecen los `as any` del bloque: el campo ya
+está en el tipo.
+
+**El texto dejó de prometer la puerta que ya no existe.**
+
+| Elemento | Antes | Ahora |
+|---|---|---|
+| Severidad del aviso | `info` | `warning` |
+| Título | — (el aviso era una sola línea) | «Reserva heredada: quedó en `pending_approval`» |
+| Cuerpo | «Esta reserva fue creada por vía de excepción (S6) y requiere aprobación de un administrador diferente al creador (cuatro ojos).» | «Esta reserva se creó antes del cambio de contrato. Las reservas nuevas ya nacen disponibles para el pool y no requieren aprobación; ésta sigue pendiente hasta que alguien la resuelva. El backend rechaza la decisión si la toma quien creó la reserva.» |
+| Botones | «Aprobar Reserva (S6)» · «Rechazar Reserva (S6)» | «Aprobar Reserva Heredada» (`page.tsx:1724`) · «Rechazar Reserva Heredada» (`page.tsx:1760`) |
+
+La frase vieja afirmaba un requisito que las reservas nuevas ya no tienen: desde CF-90 nacen
+`available` y entran al pool sin aprobación. El texto nuevo dice el hecho —se creó antes del
+cambio— y conserva únicamente la restricción que sigue viva para estas filas: `assertFourEyes`
+(`approveScheduledTripForCompany.ts:171`) rechaza al creador, así que el administrador no se entera
+del `failed-precondition` recién cuando aprieta el botón.
+
+**Los callables no hubo que arreglarlos.** Los botones ya llamaban a los callables desplegados por
+`src/utils/functions.ts` —`approveScheduledTripForCompanyCallable` (`:1377`, payload
+`{ scheduledTripId }`) y `rejectScheduledTripForCompanyCallable` (`:1401`, payload
+`{ scheduledTripId, reason }`)—, el mismo camino que usa `platformAdvanceTrip`. El id se resuelve con
+`(activeRequest as any).scheduledTripId || activeRequest.tripId || activeRequest.id`, que para una
+fila de `scheduledTrips` es el `scheduledTripId` del backend. Después de decidir, `fetchScheduledTrips`
+(`page.tsx:203`) vuelve a leer la reserva y el panel desaparece solo: el estado ya no es
+`pending_approval`.
+
+### 3. Qué NO se tocó
+
+- `src/services/b2b/requestService.ts`: sin cambios. No existía ahí ningún envoltorio de
+  aprobación y el panel invoca los callables oficiales directo, igual que el avance del viaje; no
+  hizo falta agregar uno.
+- El backend, `scheduledTripStatus.ts` y las dos guardas: `pending_approval` sigue en el conjunto
+  cerrado y las puertas siguen exigiendo ese estado. Este cambio no reactiva la puerta para las
+  reservas nuevas.
+- El resto del panel: ni la tabla, ni el `Stepper`, ni el filtro por estado, ni los botones de avance
+  cambian de fuente de estado.
+
+### 4. Cómo se verifica
+
+```bash
+npx eslint "src/app/(DashboardLayout)/(B2B)/Solicitudes/page.tsx" src/services/b2b/requestService.ts
+npx tsc --noEmit
+grep -n "rawStatus" "src/app/(DashboardLayout)/(B2B)/Solicitudes/page.tsx"
+grep -rn "requiere aprobación de un administrador" src/
+```
+
+- `eslint` sale sin salida y con exit 0: ningún problema nuevo.
+- `tsc --noEmit` informa 15 errores, todos `TS2307` en
+  `src/app/(DashboardLayout)/layout/header/data.tsx` por imágenes y svg sin declaración de módulo,
+  previos al cambio; ninguno en los dos archivos de F4.
+- El `grep` de `rawStatus` devuelve el tipo (`page.tsx:105`), las dos asignaciones (`:386`, `:402`) y
+  la condición (`:1684`): no hay otro lector del estado crudo.
+- El segundo `grep` no encuentra nada: la frase «requiere aprobación de un administrador» ya no está
+  en `src/`.
+
+En la pantalla, con una sesión de superAdmin o de `admin` del país: la reserva heredada aparece en la
+tabla como «Solicitada» (es su estado normalizado) y, al abrirla, muestra el aviso y los dos botones.
+Aprobar la pasa a `available`, la manda al pool y el panel desaparece al refrescar; rechazar pide el
+motivo obligatorio y reporta el techo liberado. Una reserva nueva —creada después del cambio, ya en
+`available`— nunca muestra el panel. Esta pantalla no tiene arnés de pruebas en el repo (no hay script
+`test`), así que la verificación es la de arriba más la inspección manual.
