@@ -423,3 +423,16 @@ Aprobar la pasa a `available`, la manda al pool y el panel desaparece al refresc
 motivo obligatorio y reporta el techo liberado. Una reserva nueva —creada después del cambio, ya en
 `available`— nunca muestra el panel. Esta pantalla no tiene arnés de pruebas en el repo (no hay script
 `test`), así que la verificación es la de arriba más la inspección manual.
+
+## Extra — `npm run lint` vuelve a funcionar
+
+Con Next 16 el comando `next lint` ya no existe, así que el script del `package.json`
+apuntaba a un binario que interpretaba `lint` como un directorio y moría con
+«Invalid project directory provided». El gate de lint del equipo estaba muerto y nadie lo
+notaba porque fallaba siempre.
+
+El script pasa a `eslint --ext .ts,.tsx src`, con la misma configuración
+(`.eslintrc.json`, `next/core-web-vitals`). Estado medido: **0 errores, 8 warnings**
+previos, exit 0. Los archivos que tocamos en F1–F4 no aportan ninguno.
+
+Nota de entorno: el checkout no trae `node_modules`; `npm ci` es el paso previo.
