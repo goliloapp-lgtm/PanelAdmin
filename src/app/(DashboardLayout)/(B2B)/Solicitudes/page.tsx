@@ -58,7 +58,6 @@ import {
   listPlatformScheduledTripsCallable,
   PlatformScheduledTripRow,
   listPlatformTripsCallable,
-  writeTripHistoryCallable,
   platformAdvanceTripCallable,
   approveScheduledTripForCompanyCallable,
   rejectScheduledTripForCompanyCallable,
@@ -69,7 +68,6 @@ import toast from "react-hot-toast";
 import { formatFriendlyError } from "@/utils/friendlyError";
 import {
   B2BCompany,
-  B2BRequestStatus,
   B2BServiceRequest,
   B2BVehicle,
 } from "@/types/b2b";
@@ -78,7 +76,6 @@ import {
   subscribeToB2BRequests,
   subscribeToB2BVehicles,
   assignB2BRequestVehicleAndDriver,
-  updateB2BRequestStatus,
   cancelB2BCompanyReservation,
   withdrawB2BDriverAvailability,
   releaseB2BRequestToPool,
@@ -806,7 +803,7 @@ const B2BSolicitudesPage = () => {
     }
   };
 
-  const handleTransitionStatus = async (nextStatus: B2BRequestStatus) => {
+  const handleCancelReservation = async () => {
     if (!activeRequest) return;
     setUpdating(true);
     try {
@@ -815,81 +812,29 @@ const B2BSolicitudesPage = () => {
         (activeRequest as any)?.scheduledTripId ||
         activeRequest.id;
 
-      if (nextStatus === "cancelled") {
-        const res = await cancelB2BCompanyReservation(
-          activeRequest.id,
-          targetRideId
-        );
+      // El estado decide la puerta dentro del servicio: pre-despacho
+      // `cancelScheduledTrip` (libera el techo), post-despacho `cancelTrip`.
+      const res = await cancelB2BCompanyReservation(
+        activeRequest.id,
+        activeRequest.status,
+        targetRideId
+      );
 
-        await fetchScheduledTrips();
-        setFeedback({
-          type: "success",
-          message: `Reserva corporativa ${activeRequest.folio} cancelada. Saldo liberado del techo: $${Number(
-            res.releasedAmount || activeRequest.finalAmount || 0
-          ).toFixed(2)} USD.`,
-        });
-      } else {
-        await updateB2BRequestStatus(
-          targetRideId,
-          nextStatus,
-          undefined,
-          activeRequest.assignedDriverId,
-          activeRequest.assignedVehicleId
-        );
-
-        if (nextStatus === "completed" && activeRequest.assignedDriverId) {
-          writeTripHistoryCallable({
-            tripId: activeRequest.tripId || activeRequest.id,
-            rideId: activeRequest.id,
-            driverId: activeRequest.assignedDriverId,
-            passengerName:
-              activeRequest.passengerNames?.[0] ||
-              activeRequest.travellerName ||
-              "Pasajero Corporativo",
-            passengerPhone: activeRequest.passengerPhone || "+503 7000-0000",
-            origin: {
-              address: activeRequest.origin?.address || "San Salvador",
-              latitude: activeRequest.origin?.lat,
-              longitude: activeRequest.origin?.lng,
-            },
-            destination: {
-              address: activeRequest.destination?.address || "San Salvador",
-              latitude: activeRequest.destination?.lat,
-              longitude: activeRequest.destination?.lng,
-            },
-            distance: activeRequest.estimatedDistanceKm || 15,
-            etaMinutes: activeRequest.estimatedDurationMinutes || 25,
-            startedAt: Date.now() - 30 * 60 * 1000,
-            completedAt: Date.now(),
-            paymentMethod: "corporate",
-          }).catch((e) =>
-            console.warn("[Solicitudes] writeTripHistory error:", e)
-          );
-        }
-
-        await fetchScheduledTrips();
-
-        const statusLabel =
-          nextStatus === "completed"
-            ? "Completado"
-            : nextStatus === "driverArrived"
-            ? "Conductor en Punto"
-            : nextStatus === "inService"
-            ? "En Curso (Viajando)"
-            : nextStatus === "enRoute"
-            ? "En Camino al Origen"
-            : nextStatus;
-
-        setFeedback({
-          type: "success",
-          message: `Estado del servicio ${activeRequest.folio} actualizado a "${statusLabel}".`,
-        });
-      }
+      await fetchScheduledTrips();
+      setFeedback({
+        type: "success",
+        message:
+          res.door === "cancelScheduledTrip"
+            ? `Reserva corporativa ${activeRequest.folio} cancelada por cancelScheduledTrip. Saldo liberado del techo: $${Number(
+                res.releasedAmount || 0
+              ).toFixed(2)} USD.`
+            : `Viaje ${activeRequest.folio} cancelado por cancelTrip (reserva ya despachada). El techo lo libera el cierre automático del backend.`,
+      });
     } catch (err: any) {
       await fetchScheduledTrips().catch(() => {});
       setFeedback({
         type: "error",
-        message: err?.message || "Error al actualizar estado.",
+        message: err?.message || "Error al cancelar la reserva.",
       });
     } finally {
       setUpdating(false);
@@ -1582,7 +1527,7 @@ const B2BSolicitudesPage = () => {
               Actualizar Estado Operativo en Tiempo Real
             </Typography>
             <Typography variant="caption" color="text.secondary" display="block" mb={1.5}>
-              Transiciones por conductor (App Driver) o por plataforma (platformAdvanceTrip) para destrabar viajes atascados; asignación, incidencias y cancelación pre-despacho.
+              El avance del viaje va sólo por `platformAdvanceTrip` (plataforma), con motivo obligatorio; la asignación, las incidencias y la cancelación también salen de acá: reserva pre-despacho por `cancelScheduledTrip`, viaje despachado por `cancelTrip`.
             </Typography>
             <Grid container spacing={1} mb={3}>
               <Grid size={{ xs: 6 }}>
@@ -1680,10 +1625,10 @@ const B2BSolicitudesPage = () => {
                     : "Baja Conductor (`seeking_driver`)"}
                 </Button>
               </Grid>
-              {/* CF-87 Corrección 13: Quitar cualquier botón que cancele un viaje in_progress o arrived */}
+              {/* CF-68: la plataforma cancela hasta antes de `completed`; desde `in_progress` o `arrived`
+                  un viaje en curso no se cancela, se reporta y se reasigna (CF-87). */}
               {activeRequest.status !== "inService" &&
                 activeRequest.status !== "arrived" &&
-                activeRequest.status !== "driverArrived" &&
                 activeRequest.status !== "completed" &&
                 activeRequest.status !== "cancelled" && (
                   <Grid size={{ xs: 6 }}>
@@ -1694,7 +1639,7 @@ const B2BSolicitudesPage = () => {
                       color="error"
                       startIcon={<IconX size={15} />}
                       disabled={updating}
-                      onClick={() => handleTransitionStatus("cancelled")}
+                      onClick={handleCancelReservation}
                     >
                       Cancelar Reserva (Liberar Techo)
                     </Button>
