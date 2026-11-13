@@ -10,7 +10,6 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { ref as rtdbRef, update as rtdbUpdate } from "firebase/database";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { db, rtdb, functions, auth } from "@/utils/firebase";
 import {
@@ -20,6 +19,7 @@ import {
   assignScheduledTripDriverCallable,
   releaseScheduledTripByPlatformCallable,
   cancelScheduledTripCallable,
+  cancelCompanyReservationCallable,
   cancelTripCallable,
   markDriverUnavailableCallable,
   assignDriverCallable,
@@ -27,6 +27,10 @@ import {
   reassignDriverCallable,
   reportTripProblemCallable,
   reassignTripDriverCallable,
+  completeTripCallable,
+  dispatchScheduledTripCallable,
+  notifyClientDriverArrivedCallable,
+  platformAdvanceTripCallable,
 } from "@/utils/functions";
 import {
   B2BRequestStatus,
@@ -221,8 +225,8 @@ export const createB2BServiceRequest = async (
     }
 
     const cleanCostCentreId =
-      data.costCenterId && data.costCenterId !== "general"
-        ? String(data.costCenterId).trim()
+      typeof data.costCenterId === "string" && data.costCenterId.trim() !== ""
+        ? data.costCenterId.trim()
         : undefined;
 
     const sanitizedLegs = legs.map((leg) => ({
@@ -397,120 +401,126 @@ export const assignB2BRequestVehicleAndDriver = async (
   }
 };
 
-export const ensureAuthenticated = async () => {
-  if (auth.currentUser) return auth.currentUser;
-  try {
-    const cred = await signInWithEmailAndPassword(
-      auth,
-      "lilousertest@gmail.com",
-      "LiloDriver2026!"
-    );
-    return cred.user;
-  } catch (e) {
-    console.warn("[requestService] ensureAuthenticated note:", e);
-    return null;
-  }
+const isNotFoundCallableError = (err: any): boolean => {
+  const code = String(err?.code || "").toLowerCase();
+  return code === "functions/not-found" || code === "not-found";
 };
 
-/**
- * Las dos puertas de la cancelación de una reserva B2B (CF-54 y CF-68).
- *
- * La reserva y el viaje son dos canales distintos, y cada uno tiene su callable:
- *
- * - **Pre-despacho** (`available`, `offered`, `driver_rejected`, `driver_assigned`):
- *   la reserva todavía no es un viaje, así que cancela `cancelScheduledTrip` y es
- *   ese callable el que libera el techo de la empresa.
- * - **Post-despacho** (`dispatched` y lo que escribe el conductor después):
- *   la reserva ya cruzó al canal del viaje, así que cancela `cancelTrip` sobre el
- *   `rideId` del viaje despachado. `cancelScheduledTrip` la rechaza con
- *   `failed-precondition`.
- *
- * Se aceptan las dos grafías porque el panel normaliza el estado con
- * `mapRawTripStatus` antes de mostrarlo: `driver_assigned` se ve como `assigned` y
- * `dispatched` como `enRoute`.
- */
-export type CancellationDoor = "cancelScheduledTrip" | "cancelTrip";
+export const updateB2BRequestStatus = async (
+  requestId: string,
+  status: B2BRequestStatus,
+  notes?: string,
+  driverId?: string,
+  _vehicleId?: string
+): Promise<void> => {
+  // No llamar ensureAuthenticated: el dashboard debe estar logueado como operador de plataforma
+  // con claim admin:true. Nunca como el conductor (CF-92).
 
-const PRE_DISPATCH_RESERVATION_STATUSES = new Set([
-  "available",
-  "offered",
-  "driver_rejected",
-  "driver_assigned",
-  "requested",
-  "seeking_driver",
-  "confirmed",
-  "assigned",
-]);
-
-const POST_DISPATCH_RIDE_STATUSES = new Set([
-  "dispatched",
-  "accepted",
-  "driver_arrived",
-  "in_progress",
-  "arrived",
-  "enRoute",
-  "driverArrived",
-  "inService",
-]);
-
-/**
- * ¿La reserva sigue en el canal de la reserva? Es el conjunto PRE-despacho, el
- * mismo con el que la cancelación elige su puerta.
- *
- * Se exporta porque `platformShiftScheduledPickup` (CF-93) acepta mover la partida
- * sólo en estos estados: el panel decide si muestra el botón con ESTA lista, no
- * con una copia. Se aceptan las dos grafías, porque el panel normaliza el estado
- * con `mapRawTripStatus` antes de mostrarlo.
- */
-export const isPreDispatchReservationStatus = (status: string): boolean => {
-  const normalized = String(status ?? "").trim();
-  return PRE_DISPATCH_RESERVATION_STATUSES.has(normalized);
-};
-
-/**
- * Elige la puerta por ESTADO, nunca por el `code` del error que devolvió el
- * servidor: un `failed-precondition` no cambia de callable, se informa tal cual.
- */
-const resolveCancellationDoor = (status: string): CancellationDoor => {
-  const normalized = String(status ?? "").trim();
-  if (isPreDispatchReservationStatus(normalized)) {
-    return "cancelScheduledTrip";
-  }
-  if (POST_DISPATCH_RIDE_STATUSES.has(normalized)) {
-    return "cancelTrip";
-  }
-  throw new Error(
-    `No se puede cancelar una reserva B2B en estado "${normalized || "(vacío)"}": ` +
-      "la cancelación elige su callable por estado (pre-despacho cancelScheduledTrip, post-despacho cancelTrip)."
+  const targetReq = currentFirestoreDocs.find(
+    (r) => r.id === requestId || r.folio === requestId
   );
+  const resolvedTripId =
+    targetReq?.tripId ||
+    (targetReq as any)?.scheduledTripId ||
+    requestId;
+  const resolvedDriverId = driverId || targetReq?.assignedDriverId;
+
+  // CF-92: usar platformAdvanceTripCallable para avances de estado, NO los callables del conductor
+  // (startTrip, markDriverArrived, completeRide exigen rideRequests.driverId === uid → siempre 403 desde el dashboard)
+  const platformReason = notes?.trim() || "Avance operativo desde consola SuperAdmin Lilo (CF-92)";
+
+  if (status === "enRoute") {
+    // "enRoute" = despacho de reserva programada → dispatchScheduledTrip crea nodo RTDB en "accepted"
+    await dispatchScheduledTripCallable({ scheduledTripId: resolvedTripId });
+  } else if (status === "driverArrived") {
+    await platformAdvanceTripCallable({
+      tripId: resolvedTripId,
+      targetStatus: "driver_arrived",
+      reason: platformReason,
+    });
+    // Notificar al cliente (best-effort)
+    const clientId = targetReq?.requestedByUid;
+    if (resolvedDriverId && clientId && clientId !== resolvedDriverId) {
+      notifyClientDriverArrivedCallable({
+        rideId: resolvedTripId,
+        driverId: resolvedDriverId,
+        clientId,
+        pickupAddress: targetReq?.origin?.address,
+        driverName: targetReq?.assignedDriverName,
+        driverVehicle: targetReq?.assignedVehiclePlate,
+      }).catch((e) =>
+        console.warn("[updateB2BRequestStatus] notifyClientDriverArrived note:", e)
+      );
+    }
+  } else if (status === "inService") {
+    await platformAdvanceTripCallable({
+      tripId: resolvedTripId,
+      targetStatus: "in_progress",
+      reason: platformReason,
+    });
+  } else if (status === "completed") {
+    try {
+      await platformAdvanceTripCallable({
+        tripId: resolvedTripId,
+        targetStatus: "completed",
+        reason: platformReason,
+      });
+    } catch (err: any) {
+      // Fallback: si el nodo RTDB no existe, intentar completeTripCallable
+      if (!isNotFoundCallableError(err)) throw err;
+      await completeTripCallable({ tripId: resolvedTripId });
+    }
+  } else if (status === "cancelled") {
+    const reason = notes || "Cancelación desde consola SuperAdmin Lilo";
+    try {
+      await cancelScheduledTripCallable({
+        scheduledTripId: resolvedTripId,
+        reason,
+      });
+    } catch (err: any) {
+      if (!isNotFoundCallableError(err)) throw err;
+      await cancelTripCallable({ rideId: resolvedTripId, reason });
+    }
+  } else {
+    throw new Error(`Transición de estado no soportada por callables oficiales: ${status}`);
+  }
+
+  currentFirestoreDocs = currentFirestoreDocs.map((r) =>
+    r.id === requestId || r.folio === requestId || r.tripId === resolvedTripId
+      ? { ...r, status, notes: notes ?? r.notes }
+      : r
+  );
+  notifyRequestSubscribers();
 };
 
 /**
- * Cancela una reserva corporativa B2B. El estado de la reserva decide la puerta:
- * pre-despacho libera el techo con `cancelScheduledTrip`, post-despacho cancela el
- * viaje con `cancelTrip`.
+ * Cancela una reserva corporativa B2B liberando el saldo reservado o gastado del techo de la empresa
+ * mediante callables oficiales 9731da6 (`cancelScheduledTrip` / `cancelTrip` / `cancelCompanyReservation`).
  */
 export const cancelB2BCompanyReservation = async (
   requestId: string,
-  status: string,
   tripId?: string,
   notes?: string
-): Promise<{ releasedAmount: number; door: CancellationDoor }> => {
-  await ensureAuthenticated();
-
-  const door = resolveCancellationDoor(status);
+): Promise<{ releasedAmount: number }> => {
+  let releasedAmount = 0;
   const targetId = tripId || requestId;
   const reason = notes || "Reserva corporativa cancelada por SuperAdmin";
 
-  let releasedAmount = 0;
-  if (door === "cancelScheduledTrip") {
+  try {
     const res = await cancelScheduledTripCallable({
       scheduledTripId: targetId,
       reason,
     });
     releasedAmount = (res.data as any)?.releasedAmount ?? 0;
-  } else {
-    await cancelTripCallable({ rideId: targetId, reason });
+  } catch (err: any) {
+    if (!isNotFoundCallableError(err)) throw err;
+    try {
+      await cancelTripCallable({ rideId: targetId, reason });
+    } catch (err2: any) {
+      if (!isNotFoundCallableError(err2)) throw err2;
+      const res = await cancelCompanyReservationCallable({ tripId: targetId });
+      releasedAmount = res.data?.releasedAmount ?? 0;
+    }
   }
 
   currentFirestoreDocs = currentFirestoreDocs.map((r) =>
@@ -530,7 +540,7 @@ export const cancelB2BCompanyReservation = async (
     // Espejo b2bRequests opcional; el callable backend ya aplicó la cancelación oficial
   }
 
-  return { releasedAmount, door };
+  return { releasedAmount };
 };
 
 /**

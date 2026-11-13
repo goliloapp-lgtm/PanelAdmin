@@ -1392,6 +1392,36 @@ export const platformShiftScheduledPickupCallable = httpsCallable<
   PlatformShiftScheduledPickupResponse
 >(functions, "platformShiftScheduledPickup");
 
+// --- platformDispatchScheduledTrip (la plataforma despacha por el conductor asignado) ---
+export interface PlatformDispatchScheduledTripParams {
+  /** La reserva que se despacha. El pais sale de la reserva, nunca del payload. */
+  scheduledTripId: string;
+  /** Obligatorio, no vacio, hasta 500 caracteres. */
+  reason: string;
+}
+
+export interface PlatformDispatchScheduledTripResponse {
+  /** La reserva despachada. */
+  scheduledTripId: string;
+  /** El estado nuevo de la reserva. */
+  status: string;
+  /** El id de `trips`, igual al de la reserva. */
+  tripId: string;
+  /** El id de `rideRequests`, igual al de la reserva. */
+  rideRequestId: string;
+  /** El conductor asignado, leido de la reserva. */
+  driverId: string;
+  /** El vehiculo aceptado. */
+  acceptedVehicleId: string;
+  /** El instante del despacho, en ISO 8601. */
+  dispatchedAt: string;
+}
+
+export const platformDispatchScheduledTripCallable = httpsCallable<
+  PlatformDispatchScheduledTripParams,
+  PlatformDispatchScheduledTripResponse
+>(functions, "platformDispatchScheduledTrip");
+
 // --- CF-89: approveScheduledTripForCompany (aprobar reserva vía excepción S6) ---
 export interface ApproveScheduledTripForCompanyParams {
   scheduledTripId: string;

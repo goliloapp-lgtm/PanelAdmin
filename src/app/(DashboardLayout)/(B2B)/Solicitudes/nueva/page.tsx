@@ -46,7 +46,7 @@ import {
 } from "@/types/b2b";
 import {
   subscribeToB2BCompanies,
-  getCostCentersResult,
+  getCostCenters,
   getCompanyTravellers,
   createB2BServiceRequest,
 } from "@/services/b2b";
@@ -68,17 +68,11 @@ import GoogleRouteMap from "../../_components/GoogleRouteMap";
 import toast from "react-hot-toast";
 import { formatFriendlyError } from "@/utils/friendlyError";
 
-const NO_ACTIVE_COST_CENTERS_MESSAGE =
-  "La empresa no tiene centros de costo activos; creá uno antes de reservar.";
-const COST_CENTERS_READ_ERROR_MESSAGE =
-  "No pudimos cargar los centros de costo de la empresa. El envío queda bloqueado para no mandar un centro inválido; recargá la pantalla o reintentá.";
-
 const NuevaSolicitudB2BPage = () => {
   const router = useRouter();
   const { isEn } = useLanguage();
   const [companies, setCompanies] = useState<B2BCompany[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [costCentersReadError, setCostCentersReadError] = useState(false);
   const [travellers, setTravellers] = useState<B2BTraveller[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setErrorState] = useState<string | null>(null);
@@ -88,9 +82,8 @@ const NuevaSolicitudB2BPage = () => {
       setErrorState(null);
       return;
     }
-    const clean = formatFriendlyError(msg);
-    setErrorState(clean);
-    toast.error(clean);
+    setErrorState(msg);
+    toast.error(msg);
   };
 
   // Backend quote state (getFareQuote callable)
@@ -98,13 +91,6 @@ const NuevaSolicitudB2BPage = () => {
   const [quoteLoading, setQuoteLoading] = useState(false);
 
   const [companyId, setCompanyId] = useState("");
-  const [costCentersLoadedFor, setCostCentersLoadedFor] = useState<string | null>(
-    null
-  );
-  // El listado de centros de la empresa anterior no vale para la nueva: hasta
-  // que resuelve la lectura, el selector queda deshabilitado y el envío se bloquea.
-  const costCentersLoading =
-    !!companyId && costCentersLoadedFor !== companyId;
   const [costCenterId, setCostCenterId] = useState("");
   const [travellerId, setTravellerId] = useState("");
   const [requestedByName, setRequestedByName] = useState("Coordinador Logístico SV");
@@ -191,34 +177,18 @@ const NuevaSolicitudB2BPage = () => {
   useEffect(() => {
     if (!companyId) {
       setCostCenters([]);
-      setCostCentersReadError(false);
-      setCostCentersLoadedFor(null);
       setTravellers([]);
       return;
     }
-    let cancelled = false;
-    getCostCentersResult(companyId).then((result) => {
-      if (cancelled) return;
-      setCostCentersLoadedFor(companyId);
-      if (!result.ok) {
-        // Un fallo de lectura no es «sin centros»: se bloquea con su propio motivo.
-        setCostCenters([]);
+    getCostCenters(companyId).then((ccs) => {
+      setCostCenters(ccs);
+      if (ccs.length > 0) {
+        setCostCenterId(ccs[0].id);
+      } else {
         setCostCenterId("");
-        setCostCentersReadError(true);
-        return;
       }
-      // CF-91 §3: sólo se ofrecen centros activos. Sin el campo `active` el
-      // centro cuenta como activo (documentos anteriores a la bandera).
-      const activeCenters = result.costCenters.filter(
-        (cc) => cc.active !== false
-      );
-      setCostCenters(activeCenters);
-      setCostCentersReadError(false);
-      // Con exactamente uno se usa ese; con varios o con ninguno no hay default.
-      setCostCenterId(activeCenters.length === 1 ? activeCenters[0].id : "");
     });
     getCompanyTravellers(companyId).then((travs) => {
-      if (cancelled) return;
       setTravellers(travs);
       if (travs.length > 0) {
         setTravellerId(travs[0].id);
@@ -227,9 +197,6 @@ const NuevaSolicitudB2BPage = () => {
         setTravellerId("");
       }
     });
-    return () => {
-      cancelled = true;
-    };
   }, [companyId]);
 
   // Regla de Negocio: > 4 pasajeros fuerza automáticamente Microbús
@@ -364,20 +331,6 @@ const NuevaSolicitudB2BPage = () => {
       setError("Selecciona una empresa corporativa B2B.");
       return;
     }
-    if (costCentersLoading) {
-      setError(
-        "Espera a que se carguen los centros de costo activos de la empresa seleccionada."
-      );
-      return;
-    }
-    if (costCentersReadError) {
-      setError(COST_CENTERS_READ_ERROR_MESSAGE);
-      return;
-    }
-    if (costCenters.length === 0) {
-      setError(NO_ACTIVE_COST_CENTERS_MESSAGE);
-      return;
-    }
     if (travellers.length === 0) {
       setError(
         "La empresa seleccionada no tiene viajeros corporativos registrados. Registra un viajero en el catálogo de la empresa antes de solicitar un traslado."
@@ -386,6 +339,10 @@ const NuevaSolicitudB2BPage = () => {
     }
     if (!selectedTraveller || !travellerId) {
       setError("Debes seleccionar un viajero registrado para la empresa.");
+      return;
+    }
+    if (costCenters.length > 0 && !costCenterId && !selectedCostCenter) {
+      setError("Por favor selecciona un centro de costo de la lista desplegable.");
       return;
     }
     if (
@@ -488,9 +445,11 @@ const NuevaSolicitudB2BPage = () => {
 
       const effectiveCostCenter =
         selectedCostCenter || (costCenters.length === 1 ? costCenters[0] : null);
-      const effectiveCostCenterId = effectiveCostCenter?.id;
+      const effectiveCostCenterId =
+        effectiveCostCenter?.id ||
+        (costCenterId && costCenterId.trim() !== "" ? costCenterId.trim() : undefined);
       const effectiveCostCenterName =
-        effectiveCostCenter?.name || effectiveCostCenter?.department;
+        effectiveCostCenter?.name || effectiveCostCenter?.department || "General Corporativo";
 
       await createB2BServiceRequest({
         companyId: selectedCompany.id,
@@ -616,73 +575,29 @@ const NuevaSolicitudB2BPage = () => {
                     <TextField
                       select
                       fullWidth
-                      required
                       label="Techo de Consumo / Centro de Costo *"
-                      value={!companyId || costCentersLoading ? "" : costCenterId}
+                      value={costCenterId}
                       onChange={(e) => setCostCenterId(e.target.value)}
-                      disabled={
-                        !companyId ||
-                        costCentersLoading ||
-                        costCenters.length === 0
-                      }
-                      error={
-                        !!companyId &&
-                        !costCentersLoading &&
-                        (costCentersReadError ||
-                          costCenters.length === 0 ||
-                          (costCenters.length > 1 && !costCenterId))
-                      }
                       helperText={
-                        !companyId
-                          ? "Selecciona una empresa para ver sus centros de costo activos."
-                          : costCentersLoading
-                            ? "Cargando centros de costo activos de la empresa…"
-                            : costCentersReadError
-                              ? COST_CENTERS_READ_ERROR_MESSAGE
-                              : costCenters.length === 0
-                                ? NO_ACTIVE_COST_CENTERS_MESSAGE
-                                : costCenters.length === 1
-                                  ? "Único centro de costo activo de la empresa: se usa automáticamente."
-                                  : !costCenterId
-                                    ? "La empresa tiene varios centros de costo activos. Selecciona uno."
-                                    : undefined
+                        costCenters.length === 0
+                          ? "Sin centros de costo registrados (se resolverá automáticamente en servidor)"
+                          : undefined
                       }
                     >
-                      {!companyId ? (
-                        <MenuItem value="" disabled>
-                          -- Selecciona una empresa --
-                        </MenuItem>
-                      ) : costCentersLoading ? (
-                        <MenuItem value="" disabled>
-                          -- Cargando centros de costo --
-                        </MenuItem>
-                      ) : costCentersReadError ? (
-                        <MenuItem value="" disabled>
-                          -- No se pudieron cargar los centros de costo --
-                        </MenuItem>
-                      ) : costCenters.length === 0 ? (
-                        <MenuItem value="" disabled>
-                          -- Sin centros de costo activos --
-                        </MenuItem>
+                      {costCenters.length === 0 ? (
+                        <MenuItem value="">General Corporativo</MenuItem>
                       ) : (
-                        <>
-                          {costCenters.length > 1 && (
-                            <MenuItem value="" disabled>
-                              -- Selecciona un centro de costo * --
+                        costCenters.map((cc) => {
+                          const limitText =
+                            cc.budgetLimit === null || cc.budgetLimit === undefined
+                              ? "SIN LÍMITE"
+                              : `$${Number(cc.budgetLimit).toFixed(2)}/ciclo`;
+                          return (
+                            <MenuItem key={cc.id} value={cc.id}>
+                              {cc.department || cc.code || "Depto"} — {cc.name} (Techo: {limitText})
                             </MenuItem>
-                          )}
-                          {costCenters.map((cc) => {
-                            const limitText =
-                              cc.budgetLimit === null || cc.budgetLimit === undefined
-                                ? "SIN LÍMITE"
-                                : `$${Number(cc.budgetLimit).toFixed(2)}/ciclo`;
-                            return (
-                              <MenuItem key={cc.id} value={cc.id}>
-                                {cc.department || cc.code || "Depto"} — {cc.name} (Techo: {limitText})
-                              </MenuItem>
-                            );
-                          })}
-                        </>
+                          );
+                        })
                       )}
                     </TextField>
                   </Grid>

@@ -343,6 +343,7 @@ export interface B2BServiceRequest {
   assignedVehicleId?: string;
   assignedVehiclePlate?: string;
   status: B2BRequestStatus;
+  rawStatus?: string;
   notes?: string;
   createdAt?: Timestamp | any;
   updatedAt?: Timestamp | any;
