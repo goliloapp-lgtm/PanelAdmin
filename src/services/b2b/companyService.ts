@@ -451,60 +451,99 @@ export const updateB2BCompanyStatus = async (
   return updateB2BCompany(id, { status, countryId: countryCode }, countryCode);
 };
 
+/**
+ * Lectura de centros de costo de una empresa. Lanza si ambos caminos fallan:
+ * `getCostCenters` la envuelve para conservar su contrato de lista vacía
+ * (CF-91 §4), y `getCostCentersResult` la expone con el error para que el alta
+ * de reserva distinga «no hay centros» de «no se pudieron leer».
+ */
+const readCostCenters = async (
+  companyId: string,
+  countryCode: string
+): Promise<CostCenter[]> => {
+  await auth.authStateReady();
+  // CF-46: Preferir listCostCentresCallable
+  try {
+    const res = await listCostCentresCallable({
+      companyId,
+      countryId: countryCode.toLowerCase(),
+    });
+    if (Array.isArray(res.data?.costCentres) && res.data.costCentres.length > 0) {
+      return res.data.costCentres.map((c) => ({
+        id: c.costCentreId,
+        name: c.name,
+        department: c.name,
+        budgetLimit: normalizeBudgetLimitValue(c.budgetLimit),
+        monthlyBudget: normalizeBudgetLimitValue(c.budgetLimit),
+        spent: typeof c.spent === "number" ? c.spent : 0,
+        reserved: typeof c.reserved === "number" ? c.reserved : 0,
+        budgetWindowStart: c.budgetWindowStartAt ?? null,
+        active: c.active !== false,
+        status: c.active ? "active" : "inactive",
+      }));
+    }
+  } catch {
+    // Fallback a lectura directa Firestore
+  }
+
+  const subCol = collection(
+    db,
+    "countries",
+    countryCode.toLowerCase(),
+    "b2bCompanies",
+    companyId,
+    "costCenters"
+  );
+  const snapshot = await getDocs(subCol);
+  return snapshot.docs.map((d) => {
+    const raw = d.data();
+    return {
+      id: d.id,
+      ...raw,
+      department: raw.department || raw.name || "General",
+      budgetLimit: normalizeBudgetLimitValue(raw.budgetLimit),
+      spent: typeof raw.spent === "number" ? raw.spent : 0,
+      reserved: typeof raw.reserved === "number" ? raw.reserved : 0,
+      status: raw.active === false ? "inactive" : raw.status || "active",
+    };
+  }) as CostCenter[];
+};
+
+// Sin filtro: `CostCenterManager` consume este getter y necesita ver los centros
+// retirados para poder reactivarlos. El alta de reserva filtra por su cuenta.
 export const getCostCenters = async (
   companyId: string,
   countryCode = "sv"
 ): Promise<CostCenter[]> => {
   try {
-    await auth.authStateReady();
-    // CF-46: Preferir listCostCentresCallable
-    try {
-      const res = await listCostCentresCallable({
-        companyId,
-        countryId: countryCode.toLowerCase(),
-      });
-      if (Array.isArray(res.data?.costCentres) && res.data.costCentres.length > 0) {
-        return res.data.costCentres.map((c) => ({
-          id: c.costCentreId,
-          name: c.name,
-          department: c.name,
-          budgetLimit: normalizeBudgetLimitValue(c.budgetLimit),
-          monthlyBudget: normalizeBudgetLimitValue(c.budgetLimit),
-          spent: typeof c.spent === "number" ? c.spent : 0,
-          reserved: typeof c.reserved === "number" ? c.reserved : 0,
-          budgetWindowStart: c.budgetWindowStartAt ?? null,
-          status: c.active ? "active" : "inactive",
-        }));
-      }
-    } catch {
-      // Fallback a lectura directa Firestore
-    }
-
-    const subCol = collection(
-      db,
-      "countries",
-      countryCode.toLowerCase(),
-      "b2bCompanies",
-      companyId,
-      "costCenters"
-    );
-    const snapshot = await getDocs(subCol);
-    const list = snapshot.docs.map((d) => {
-      const raw = d.data();
-      return {
-        id: d.id,
-        ...raw,
-        department: raw.department || raw.name || "General",
-        budgetLimit: normalizeBudgetLimitValue(raw.budgetLimit),
-        spent: typeof raw.spent === "number" ? raw.spent : 0,
-        reserved: typeof raw.reserved === "number" ? raw.reserved : 0,
-        status: raw.active === false ? "inactive" : raw.status || "active",
-      };
-    }) as CostCenter[];
-    return list;
+    return await readCostCenters(companyId, countryCode);
   } catch (error) {
     console.warn("[companyService] Error fetching cost centers:", error);
     return [];
+  }
+};
+
+export type CostCentersReadResult =
+  | { ok: true; costCenters: CostCenter[] }
+  | { ok: false; error: unknown };
+
+/**
+ * Igual que `getCostCenters` pero conserva el fallo de lectura en vez de
+ * devolver `[]`: el alta de reserva no puede confundir «sin centros» con
+ * «no se pudieron leer» (CF-91 §4).
+ */
+export const getCostCentersResult = async (
+  companyId: string,
+  countryCode = "sv"
+): Promise<CostCentersReadResult> => {
+  try {
+    return {
+      ok: true,
+      costCenters: await readCostCenters(companyId, countryCode),
+    };
+  } catch (error) {
+    console.warn("[companyService] Error fetching cost centers:", error);
+    return { ok: false, error };
   }
 };
 

@@ -202,3 +202,107 @@ npx tsc --noEmit
 
 `npm run lint` no se usa: `next lint` de esta versión busca un directorio `lint` y falla por
 configuración, no por código.
+
+## F3 — Centros de costo activos y aviso previo
+
+Fecha: 2026-11-12. Alcance: `frontend_Dashboard` — el alta de reserva de `/Solicitudes/nueva`
+y la lectura de centros de `src/services/b2b/companyService.ts`. Referencia: CF-91 §3 (la regla del
+selector) y los rechazos `no-cost-centre` / centro inexistente del backend.
+
+### 1. Qué se rompía
+
+- El selector del alta ofrecía centros retirados: ni la pantalla ni la lectura que consumía miraban
+  la bandera `active`. Elegir uno hace que el backend rechace con `failed-precondition` nombrando el
+  id pedido y los que la empresa sí tiene.
+- Cuando la empresa no tenía ningún centro, el campo dejaba de ser obligatorio (`page.tsx:579-580`,
+  antes del cambio), el menú mostraba un `MenuItem` inventado «General Corporativo»
+  (`page.tsx:584-585`, antes del cambio) y el helper prometía que «se resolverá automáticamente en
+  servidor». El backend nunca adivina: con cero centros rechaza `failed-precondition`
+  (`no-cost-centre`), y «General Corporativo» no es el id de ningún documento.
+- Además, un error de lectura se veía igual que una empresa sin centros: `getCostCenters` traga el
+  error y devuelve `[]` (CF-91 §4), así que el formulario iba a bloquear con «no tiene centros»
+  aunque el problema fuera de permisos o de red.
+
+### 2. Dónde vive el filtro: el getter compartido no cambia
+
+`getCostCenters` (`companyService.ts:514-524`) conserva el comportamiento de `HEAD`: **no filtra** y
+sigue devolviendo `[]` ante un fallo de lectura. Lo consume `CostCenterManager`
+(`src/app/(DashboardLayout)/(B2B)/_components/CostCenterManager.tsx:72`), que necesita ver los
+centros retirados para poder reactivarlos (`:231-233`, chip «Inactivo» en `:269-273`). Ese archivo
+no se tocó.
+
+La lectura común quedó en `readCostCenters` (`companyService.ts:460-510`) y su mapeo ahora expone
+`active: c.active !== false` (`:481`); el fallback conserva el campo del documento (`...raw`,
+`:502`). Sobre eso:
+
+| Función | Contrato | Consumidor |
+|---|---|---|
+| `getCostCenters` (`:514-524`) | lista completa, `[]` si falla la lectura (igual que `HEAD`) | `CostCenterManager` y demás pantallas |
+| `getCostCentersResult` (`:535-548`) | `{ ok: true, costCenters }` o `{ ok: false, error }` | sólo el alta de reserva |
+
+El formulario filtra `cc.active !== false` (`page.tsx:212-214`). Sin el campo `active` el centro
+cuenta como activo (documentos anteriores a la bandera), igual que la proyección del backend
+(`projectCostCentre`, `costCentreCallables.ts:632`, `active: data.active !== false`). `active: false`
+es la única marca de retiro (`deleteCostCenter`, `companyService.ts:610-622`).
+
+### 3. Las ramas del alta: 0 / 1 / varios / lectura fallida
+
+| Estado | Selección inicial | Envío | Dónde |
+|---|---|---|---|
+| 0 activos | vacía; selector deshabilitado con `-- Sin centros de costo activos --` y helper «La empresa no tiene centros de costo activos; creá uno antes de reservar.» | bloqueado antes del callable con ese mismo texto | validación `page.tsx:377-380`; campo `:642-643`, `:663-666` |
+| 1 activo | autoseleccionado; helper «Único centro de costo activo de la empresa: se usa automáticamente.» | permitido; manda su id | `page.tsx:218`, `:489-493`, `:644-645` |
+| Varios | vacía, con `-- Selecciona un centro de costo * --` y helper «La empresa tiene varios centros de costo activos. Selecciona uno.» | bloqueado hasta elegir un id que exista en `costCenters` | validación `page.tsx:391-399`; campo `:646-647`, `:669-672` |
+| Lectura fallida | vacía; selector deshabilitado con `-- No se pudieron cargar los centros de costo --` y helper «No pudimos cargar los centros de costo de la empresa. El envío queda bloqueado para no mandar un centro inválido; recargá la pantalla o reintentá.» | bloqueado con ese motivo, distinto del de cero centros | estado `page.tsx:81`, rama `:203-208`; validación `:373-376`; campo `:640-641`, `:659-662` |
+
+Los dos textos de bloqueo son constantes (`NO_ACTIVE_COST_CENTERS_MESSAGE` y
+`COST_CENTERS_READ_ERROR_MESSAGE`, `page.tsx:71-75`) que usan el helper, el menú y el `Alert`/toast
+del envío: el motivo que se ve antes de enviar es el mismo que devuelve el botón.
+
+No hay default para varios: el efecto ya no deja el primer centro seleccionado cuando hay más de
+uno (`page.tsx:218`), que era el default silencioso. Mientras la lectura de la empresa nueva está
+en vuelo, `costCentersLoading` (`page.tsx:101-107`) deshabilita el selector (`:623-627`) y bloquea
+el envío (`:367-372`); las respuestas de la empresa anterior se descartan (`:199-201`), así que no
+se puede mandar el id de otra empresa. Sin empresa elegida el campo tampoco muestra el aviso de cero
+centros: pide seleccionar una (`page.tsx:636-637`, `:651-654`).
+
+### 4. El payload
+
+`effectiveCostCenterId` sale sólo del centro resuelto contra la lista (`page.tsx:489-493`): se quitó
+el `|| costCenterId` y el nombre inventado «General Corporativo» que ponía `costCenterName`
+(`page.tsx:449`, antes del cambio). Si no hay centro resuelto el envío ya está bloqueado antes, así
+que el callable no recibe ni un literal de UI ni el id de otra empresa. El guard de `"general"` en
+`requestService.ts:224` queda (fuera de este alcance): sigue evitando que un literal viejo llegue
+como id.
+
+### 5. Qué NO se tocó
+
+- `CostCenterManager` no se tocó: consume el mismo `getCostCenters`, que conserva el comportamiento
+  de `HEAD` (lista sin filtro y `[]` ante error), así que el gestor sigue viendo y reactivando los
+  centros retirados.
+- `src/services/b2b/requestService.ts`, `src/services/b2b/index.ts` (el barrel es `export *`, así que
+  `getCostCentersResult` se importa sin tocarlo), `src/utils/functions.ts` y el backend.
+
+### 6. Cómo se verifica
+
+```bash
+grep -rn "General Corporativo\|se resolverá automáticamente" src/
+npx eslint src/services/b2b/companyService.ts "src/app/(DashboardLayout)/(B2B)/Solicitudes/nueva/page.tsx"
+npx tsc --noEmit
+```
+
+- El primer `grep` no debe encontrar nada en los dos archivos de F3. La única coincidencia es
+  `src/app/(DashboardLayout)/(B2B)/DocumentosSV/page.tsx:832` («Pool General Corporativo SV»), que
+  es el nombre de un pool de documentos, no un centro de costo.
+- `eslint` sale con exit 0 y un solo warning, `react-hooks/exhaustive-deps` sobre el efecto de
+  suscripción (`page.tsx:189`), que ya existe en `HEAD` (ahí en `:176`): no hay warnings nuevos.
+- `tsc --noEmit` sólo informa los `TS2307` de `layout/header/data.tsx` por imports de imágenes y
+  svg, previos; los dos archivos de F3 quedan sin errores.
+
+En la pantalla: con una empresa sin centros el aviso aparece en el campo antes de enviar y el botón
+responde con el mismo motivo, sin llegar al servidor. Con un solo centro queda seleccionado. Con
+varios, el selector arranca vacío y el envío se rechaza hasta elegir uno. Para la rama de lectura
+fallida, bloquear la lectura de `costCenters` (por ejemplo, con una sesión sin permiso sobre la
+subcolección o sin red) y confirmar que el campo dice «No pudimos cargar los centros de costo…» y
+no «no tiene centros»: el envío se bloquea por el primer motivo. Esta pantalla no tiene arnés de
+pruebas en el repo (no hay script `test`), así que la verificación es la de arriba más la
+inspección manual.
