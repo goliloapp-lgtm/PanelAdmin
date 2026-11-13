@@ -436,3 +436,134 @@ El script pasa a `eslint --ext .ts,.tsx src`, con la misma configuración
 previos, exit 0. Los archivos que tocamos en F1–F4 no aportan ninguno.
 
 Nota de entorno: el checkout no trae `node_modules`; `npm ci` es el paso previo.
+
+## F8 — Botón «Adelantar hora» para la demostración
+
+El flujo reserva → despacho → viaje no se puede recorrer en una demostración: la ventana de
+despacho abre en `scheduledPickupAt - deadTimeMinutes` y cierra en `scheduledPickupAt`, así que una
+reserva programada para dentro de dos horas no se puede despachar. Faltaba el único control que
+mueve esa partida. Este frente lo agrega en el panel de `/Solicitudes`, sobre una reserva **NO
+despachada**, y llama a `platformShiftScheduledPickup` (CF-93,
+`Backend/Firebase/docs/CONTRATO_FRONTEND.md`).
+
+### 1. Qué hace el botón
+
+El botón se llama **«Adelantar hora»** y vive en el `Drawer` de monitoreo, dentro del mismo `Grid`
+de controles donde están las transiciones de estado y el panel de reservas heredadas (F4).
+
+Al pulsarlo pide el motivo con `window.prompt`, igual que los botones de avance de
+`platformAdvanceTrip`:
+
+- **Cancelar** el diálogo no hace nada: no hay llamada, ni toast, ni cambio de estado.
+- **Aceptar vacío** tampoco llama al backend: el motivo es obligatorio y se informa con
+  `toast.error("Debe ingresar un motivo para cambiar la hora de recogida.")`.
+- Con motivo, se recorta a 500 caracteres y se envía `{ scheduledTripId, reason }`.
+  `minutesFromNow` se **omite a propósito**: el backend usa el `deadTimeMinutes` de
+  `platformConfig/operations`, que es el valor que deja la ventana de despacho abierta en el acto.
+  La UI no expone el campo, porque el botón existe para la demostración y no para postergar.
+
+El callable mueve la partida; **no** despacha, **no** toca el `quote`, el techo ni el `status`. El
+resultado se informa con el toast que el operador necesita para la demostración:
+
+| Respuesta | Toast |
+|---|---|
+| `changed: true` | `Hora de recogida de <folio> movida a <hora nueva>. La ventana de despacho abre a <windowOpensAt>.` |
+| `changed: false` | `La hora de recogida de <folio> ya era <hora>: no se escribió nada.` |
+| error | `formatFriendlyError(err, "No se pudo cambiar la hora de recogida.")` — lee `error.details`, así que el motivo que nombró el servidor (`failed-precondition`, `not-found`, `invalid-argument`, `permission-denied`) llega tal cual a la pantalla, con el mismo orden de lectura que F2. |
+
+Después de la respuesta el panel refresca con `fetchScheduledTrips()`, como hacen los botones de
+avance. Las horas que muestra el toast se formatean con `formatPickupInstant`, que parsea el ISO del
+callable y, si no parsea, muestra el valor crudo en lugar de «Invalid Date».
+
+### 2. En qué estados aparece
+
+El botón sólo se renderiza cuando se cumple la condición `activeIsPreDispatch`:
+
+1. `isPreDispatchReservationStatus(activeRequest.rawStatus)`, el conjunto cerrado que **ya existía**
+   en `src/services/b2b/requestService.ts` para elegir la puerta de la cancelación
+   (`PRE_DISPATCH_RESERVATION_STATUSES`, CF-54/CF-68). No hay una tabla nueva: se exportó el
+   predicado y `resolveCancellationDoor` pasó a usarlo, así que el panel y la cancelación leen la
+   misma lista.
+2. No existe `trips/{scheduledTripId}` en `platformTrips`, que es la fuente con la que el panel ya
+   cruza cada reserva con su viaje (`mappedScheduledRequests`). Un despacho a medias puede haber
+   escrito el viaje sin mover el estado, y el backend rechaza mover la partida ahí.
+
+Con la reserva en `scheduledTrips`, `rawStatus` es el estado crudo del backend, y el conjunto
+PRE-despacho deja el comportamiento así:
+
+| Estado de la reserva | ¿Botón? |
+|---|---|
+| `available`, `offered`, `driver_rejected`, `driver_assigned` | **sí** |
+| `dispatched` (o con `trips/{id}` ya escrito) | no |
+| `completed`, `cancelled`, `expired` | no |
+| `pending_approval` | no |
+
+El conjunto reusado también contiene `requested`, `seeking_driver`, `confirmed` y `assigned`, que
+son las grafías normalizadas/heredadas de esos mismos estados pre-despacho. Sobre una reserva de
+`scheduledTrips` no aparecen (el estado crudo es el del backend); una fila espejo sin reserva
+detrás sigue mostrando el botón y el backend la rechaza con `not-found`, igual que rechaza hoy la
+cancelación de una fila sin reserva.
+
+### 3. El callable que llama
+
+`platformShiftScheduledPickup` (CF-93), definido donde el repo define todos los demás:
+`src/utils/functions.ts`, junto a `platformAdvanceTripCallable` y con el mismo patrón
+(`httpsCallable<Params, Response>` + interfaces exportadas).
+
+```ts
+export const platformShiftScheduledPickupCallable = httpsCallable<
+  PlatformShiftScheduledPickupParams,
+  PlatformShiftScheduledPickupResponse
+>(functions, "platformShiftScheduledPickup");
+```
+
+**No** se agregó envoltorio en `src/services/b2b/requestService.ts`: el panel invoca los callables
+de plataforma directo —`platformAdvanceTrip`, `approveScheduledTripForCompany`,
+`rejectScheduledTripForCompany`— y éste sigue la misma ruta, igual que quedó documentado en F4 §3.
+De ese archivo sólo se exporta el predicado del punto 2.
+
+### 4. Qué NO se tocó
+
+- El backend y su contrato: el panel sólo consume `platformShiftScheduledPickup` como está
+  desplegado.
+- El resto del panel: ni la tabla, ni los filtros, ni el `Stepper`, ni los botones de avance, ni la
+  cancelación, ni el panel de reservas heredadas cambian. El botón es un bloque nuevo dentro del
+  `Grid` de controles.
+- `minutesFromNow`: no se expone en la UI.
+- La escritura del espejo `b2bRequests`: la partida vive en `scheduledTrips` y el panel se refresca
+  con `fetchScheduledTrips()`, no con un `updateDoc` especulativo.
+
+### 5. Cómo se verifica
+
+```bash
+npx eslint "src/app/(DashboardLayout)/(B2B)/Solicitudes/page.tsx" src/services/b2b/requestService.ts src/utils/functions.ts
+npx tsc --noEmit
+npm run lint
+grep -rn "PRE_DISPATCH_RESERVATION_STATUSES" --include=*.ts --include=*.tsx src/
+grep -rn "platformShiftScheduledPickup\|Adelantar hora" --include=*.ts --include=*.tsx src/
+```
+
+- `eslint` sobre los tres archivos: exit 0, sin salida.
+- `tsc --noEmit`: 15 errores, todos `TS2307` en
+  `src/app/(DashboardLayout)/layout/header/data.tsx` por imágenes y svg sin declaración de módulo,
+  previos al cambio; ninguno en los archivos de F8.
+- `npm run lint`: **0 errores, 8 warnings**, exit 0. Los 8 son los previos de F1–F4
+  (`exhaustive-deps` y un `no-img-element`); los archivos de F8 no aportan ninguno.
+- El primer `grep` devuelve sólo dos líneas de `requestService.ts`: la definición del conjunto y el
+  predicado que lo lee. No hay otra copia de la lista en `src/`.
+- El segundo `grep` devuelve el callable (`functions.ts`), el import y el manejador
+  (`page.tsx`), y la etiqueta «Adelantar hora».
+
+En la pantalla, con sesión de `admin` de plataforma o `superAdmin` del país: se abre una reserva que
+esté en `available`, `offered`, `driver_rejected` o `driver_assigned` y el botón aparece; en una
+`dispatched`, terminal o `pending_approval` no aparece. Pulsarlo pide el motivo, y al aceptar el
+toast muestra la hora nueva y el instante en que abre la ventana. El cambio queda en la reserva con
+`previousScheduledPickupAt`, `pickupShiftedAt`, `pickupShiftedBy` y `pickupShiftReason`, y con la
+ventana abierta el despacho normal la puede tomar. Un `failed-precondition` (por ejemplo, un cambio
+concurrente que ya cruzó la reserva al canal) se muestra con el motivo que nombró el servidor.
+
+La rama `changed: false` no se provoca a mano con facilidad: exige que el instante calculado coincida
+al milisegundo con el guardado. La cubre
+`functions/tests/platformShiftScheduledPickup.test.js` en el backend; el panel sólo la informa.
+Este repo no tiene arnés de pruebas para la pantalla (no hay script `test`), así que la verificación
+es la de arriba más la inspección manual.

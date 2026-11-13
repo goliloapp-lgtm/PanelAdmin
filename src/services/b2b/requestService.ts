@@ -454,12 +454,26 @@ const POST_DISPATCH_RIDE_STATUSES = new Set([
 ]);
 
 /**
+ * ¿La reserva sigue en el canal de la reserva? Es el conjunto PRE-despacho, el
+ * mismo con el que la cancelación elige su puerta.
+ *
+ * Se exporta porque `platformShiftScheduledPickup` (CF-93) acepta mover la partida
+ * sólo en estos estados: el panel decide si muestra el botón con ESTA lista, no
+ * con una copia. Se aceptan las dos grafías, porque el panel normaliza el estado
+ * con `mapRawTripStatus` antes de mostrarlo.
+ */
+export const isPreDispatchReservationStatus = (status: string): boolean => {
+  const normalized = String(status ?? "").trim();
+  return PRE_DISPATCH_RESERVATION_STATUSES.has(normalized);
+};
+
+/**
  * Elige la puerta por ESTADO, nunca por el `code` del error que devolvió el
  * servidor: un `failed-precondition` no cambia de callable, se informa tal cual.
  */
 const resolveCancellationDoor = (status: string): CancellationDoor => {
   const normalized = String(status ?? "").trim();
-  if (PRE_DISPATCH_RESERVATION_STATUSES.has(normalized)) {
+  if (isPreDispatchReservationStatus(normalized)) {
     return "cancelScheduledTrip";
   }
   if (POST_DISPATCH_RIDE_STATUSES.has(normalized)) {

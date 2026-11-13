@@ -38,6 +38,7 @@ import {
   IconPackage,
   IconCheck,
   IconPlayerPlay,
+  IconClock,
   IconX,
 } from "@tabler/icons-react";
 import { useRouter } from "next/navigation";
@@ -59,6 +60,7 @@ import {
   PlatformScheduledTripRow,
   listPlatformTripsCallable,
   platformAdvanceTripCallable,
+  platformShiftScheduledPickupCallable,
   approveScheduledTripForCompanyCallable,
   rejectScheduledTripForCompanyCallable,
 } from "@/utils/functions";
@@ -81,6 +83,7 @@ import {
   releaseB2BRequestToPool,
   reportB2BTripProblem,
   reassignB2BTripDriver,
+  isPreDispatchReservationStatus,
 } from "@/services/b2b";
 import {
   mapRawTripStatus,
@@ -103,6 +106,16 @@ import {
 type B2BServiceRequestWithRawStatus = B2BServiceRequest & {
   /** Estado tal como lo devuelve el backend; nunca pasa por `mapRawTripStatus`. */
   rawStatus: string;
+};
+
+/**
+ * CF-93 — La recogida llega del callable como instante ISO y el toast la muestra en
+ * la zona del operador. Un valor que no parsea se muestra tal cual: es mejor ver lo
+ * que devolvió el servidor que un «Invalid Date».
+ */
+const formatPickupInstant = (value: string): string => {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 };
 
 const B2BSolicitudesPage = () => {
@@ -492,6 +505,20 @@ const B2BSolicitudesPage = () => {
   const activeTripId = activeRequest?.tripId || "";
   const activeStatus = activeRequest?.status || "";
   const activeIsImmediate = Boolean(activeRequest?.isImmediate);
+
+  // CF-93 — ¿Se puede mover la partida de esta reserva? El conjunto cerrado de estados
+  // PRE-despacho ya existe (`isPreDispatchReservationStatus`), así que no hay una tabla
+  // nueva: `dispatched`, las terminales y `pending_approval` quedan fuera solas. Además,
+  // un viaje ya despachado en `platformTrips` desmiente al estado: un despacho a medias
+  // puede haber escrito `trips/{scheduledTripId}` sin mover la reserva, y el backend
+  // rechaza mover la partida ahí. El botón no aparece en ese caso tampoco.
+  const activeIsPreDispatch = Boolean(
+    activeRequest &&
+      isPreDispatchReservationStatus(activeRequest.rawStatus) &&
+      !platformTrips.some(
+        (t) => t.tripId === (activeRequest as any)?.scheduledTripId
+      )
+  );
 
   const lastFetchedKeyRef = React.useRef<string>("");
 
@@ -1002,6 +1029,46 @@ const B2BSolicitudesPage = () => {
     } catch (err: any) {
       toast.error(
         formatFriendlyError(err, "No se pudo avanzar el estado del viaje.")
+      );
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  // --- CF-93: platformShiftScheduledPickup (adelantar la recogida de una reserva no despachada) ---
+  const handleShiftScheduledPickup = async () => {
+    if (!activeRequest) return;
+    const scheduledTripId =
+      (activeRequest as any)?.scheduledTripId || activeRequest.id;
+    const reason = window.prompt(
+      "Motivo para adelantar la hora de recogida (obligatorio, máx 500 caracteres):"
+    );
+    // Cancelar el prompt no hace nada; aceptar vacío tampoco llama al backend, porque
+    // el motivo es obligatorio para el callable.
+    if (reason === null) return;
+    if (reason.trim().length === 0) {
+      toast.error("Debe ingresar un motivo para cambiar la hora de recogida.");
+      return;
+    }
+    setUpdating(true);
+    try {
+      // `minutesFromNow` se omite a propósito: el backend usa `deadTimeMinutes` de
+      // `platformConfig/operations` y la ventana de despacho queda abierta en el acto.
+      const res = await platformShiftScheduledPickupCallable({
+        scheduledTripId,
+        reason: reason.trim().slice(0, 500),
+      });
+      const pickupLabel = formatPickupInstant(res.data.scheduledPickupAt);
+      const windowLabel = formatPickupInstant(res.data.windowOpensAt);
+      toast.success(
+        res.data.changed
+          ? `Hora de recogida de ${activeRequest.folio} movida a ${pickupLabel}. La ventana de despacho abre a ${windowLabel}.`
+          : `La hora de recogida de ${activeRequest.folio} ya era ${pickupLabel}: no se escribió nada.`
+      );
+      await fetchScheduledTrips();
+    } catch (err: any) {
+      toast.error(
+        formatFriendlyError(err, "No se pudo cambiar la hora de recogida.")
       );
     } finally {
       setUpdating(false);
@@ -1673,6 +1740,37 @@ const B2BSolicitudesPage = () => {
                     </Button>
                   </Grid>
                 )}
+
+              {/* CF-93 — La plataforma mueve la recogida al momento para que la ventana de
+                  despacho quede abierta sin esperar la hora programada. Sólo aparece en una
+                  reserva PRE-despacho (`activeIsPreDispatch`, el mismo conjunto cerrado que
+                  elige la puerta de la cancelación) y sin `trips/{scheduledTripId}`: el
+                  backend rechaza el resto con `failed-precondition`. */}
+              {activeIsPreDispatch && (
+                <Grid size={{ xs: 12 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                    mb={1}
+                  >
+                    Adelantar la hora mueve `scheduledPickupAt` al momento vía
+                    `platformShiftScheduledPickup` (CF-93); no toca precio, techo ni
+                    estado. La reserva queda con quién, cuándo y por qué.
+                  </Typography>
+                  <Button
+                    fullWidth
+                    size="small"
+                    variant="outlined"
+                    color="secondary"
+                    startIcon={<IconClock size={15} />}
+                    disabled={updating}
+                    onClick={handleShiftScheduledPickup}
+                  >
+                    Adelantar hora
+                  </Button>
+                </Grid>
+              )}
 
               {/* F4 — Reservas heredadas: sólo una reserva que quedó en `pending_approval` ANTES
                   del cambio de contrato se resuelve acá. Las nuevas nacen `available` (CF-90) y no

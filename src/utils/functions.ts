@@ -1363,6 +1363,35 @@ export const platformAdvanceTripCallable = httpsCallable<
   PlatformAdvanceTripResponse
 >(functions, "platformAdvanceTrip");
 
+// --- CF-93: platformShiftScheduledPickup (mover la recogida al momento, reserva NO despachada) ---
+export interface PlatformShiftScheduledPickupParams {
+  scheduledTripId: string;
+  /**
+   * Minutos desde ahora, entero entre 0 y 1440. Omitido: `deadTimeMinutes` de
+   * `platformConfig/operations`, que es lo que deja la ventana de despacho abierta en el acto.
+   */
+  minutesFromNow?: number;
+  /** Obligatorio, no vacío, hasta 500 caracteres. */
+  reason: string;
+}
+
+export interface PlatformShiftScheduledPickupResponse {
+  scheduledTripId: string;
+  /** El instante ISO que la reserva tenía antes del cambio. */
+  previousScheduledPickupAt: string;
+  /** El instante ISO que la reserva tiene ahora. */
+  scheduledPickupAt: string;
+  /** `scheduledPickupAt - deadTimeMinutes`: desde cuándo se puede despachar. */
+  windowOpensAt: string;
+  /** `false` es un éxito idempotente: la partida calculada ya era la de la reserva. */
+  changed: boolean;
+}
+
+export const platformShiftScheduledPickupCallable = httpsCallable<
+  PlatformShiftScheduledPickupParams,
+  PlatformShiftScheduledPickupResponse
+>(functions, "platformShiftScheduledPickup");
+
 // --- CF-89: approveScheduledTripForCompany (aprobar reserva vía excepción S6) ---
 export interface ApproveScheduledTripForCompanyParams {
   scheduledTripId: string;
