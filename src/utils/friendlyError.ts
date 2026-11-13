@@ -9,6 +9,11 @@ export function formatFriendlyError(
 ): string {
   if (!err) return fallbackMessage;
 
+  // Orden de lectura del motivo: `details` (lo que el servidor nombró), después
+  // `message`, después `code`. `details` entra en el texto que clasifican los
+  // mapeos amables de abajo y, si ninguno aplica, se devuelve tal cual.
+  const serverDetail = readServerDetail((err as any)?.details);
+
   const rawMessage =
     typeof err === "string"
       ? err
@@ -17,7 +22,7 @@ export function formatFriendlyError(
       : "";
   const rawCode =
     typeof (err as any)?.code === "string" ? (err as any).code : "";
-  const combined = `${rawCode} ${rawMessage}`.toLowerCase();
+  const combined = `${rawCode} ${serverDetail} ${rawMessage}`.toLowerCase();
 
   // 1. Anticipación mínima de reserva (minimumBookingLeadMinutes)
   if (
@@ -204,6 +209,13 @@ export function formatFriendlyError(
     return "Hay un problema temporal de conexión a internet. Intenta nuevamente en unos segundos.";
   }
 
+  // El motivo que el servidor adjuntó en `details` no se filtra: es el único
+  // texto que nombra la negativa, y limpiarlo o resumirlo lo borraría. Los
+  // mapeos amables de arriba ya tuvieron su oportunidad (techo, centro de
+  // costo, permisos con texto deliberado, sesión, red); acá llega lo que
+  // ninguno conoce y se muestra tal cual lo escribió el servidor.
+  if (serverDetail) return serverDetail;
+
   const cleanedSpanish = rawMessage
     .replace(/\[4\d\d\]|\[5\d\d\]/g, "")
     .replace(/\((?:CF|LO|D)-\d+(?:\.\d+)?\)/gi, "")
@@ -229,4 +241,32 @@ export function formatFriendlyError(
   }
 
   return fallbackMessage;
+}
+
+/**
+ * Texto accionable que un callable adjuntó en `HttpsError.details`.
+ *
+ * El backend nombra el motivo ahí y no en `message`: `no-cost-centre`,
+ * `ceiling-reached`, `realise-exceeds-reserved`, o el campo que el rechazo
+ * nombra (`invalid-argument`). Antes este helper sólo miraba `message` y `code`,
+ * así que ese motivo se perdía y la pantalla mostraba un texto genérico.
+ *
+ * Acepta la cadena tal cual o el objeto que traiga el servidor, y devuelve el
+ * primer valor de texto útil: `message` (el texto largo que nombra el documento
+ * y el campo), `reason` (el código de la negativa) o `field` (el campo
+ * rechazado). No traduce ni resume: el texto del servidor se usa tal cual.
+ */
+function readServerDetail(details: unknown): string {
+  if (typeof details === "string") return details.trim();
+  if (!details || typeof details !== "object" || Array.isArray(details)) {
+    return "";
+  }
+  const record = details as Record<string, unknown>;
+  for (const key of ["message", "reason", "field"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return "";
 }

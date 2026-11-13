@@ -122,6 +122,17 @@ const B2BSolicitudesPage = () => {
     }
   };
 
+  // `setFeedback` vuelve a pasar todo mensaje de error por `formatFriendlyError`.
+  // Un rechazo del backend se formatea UNA sola vez acá: así el motivo que llegó
+  // en `details` no se reclasifica en el segundo pase (un `no-company-document`
+  // se convertía en el texto genérico) y la pantalla muestra exactamente lo que
+  // devolvió `formatFriendlyError`.
+  const setErrorFeedback = (err: unknown, fallbackMessage: string) => {
+    const message = formatFriendlyError(err, fallbackMessage);
+    setFeedbackState({ type: "error", message });
+    toast.error(message);
+  };
+
   const [searchTerm, setSearchTerm] = useState("");
   const [companyFilter, setCompanyFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -832,10 +843,7 @@ const B2BSolicitudesPage = () => {
       });
     } catch (err: any) {
       await fetchScheduledTrips().catch(() => {});
-      setFeedback({
-        type: "error",
-        message: err?.message || "Error al cancelar la reserva.",
-      });
+      setErrorFeedback(err, "Error al cancelar la reserva.");
     } finally {
       setUpdating(false);
     }
