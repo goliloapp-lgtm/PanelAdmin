@@ -112,6 +112,10 @@ export default function EmpresasPage() {
         // un snapshot nuevo, para que un rechazo de permisos no se vea nunca
         // como "no hay empresas".
         setLoadError(friendlyMessage);
+        // La lista anterior tampoco sobrevive al aviso: mostrarla debajo de un
+        // cartel que dice que no se pudo cargar contradice el mensaje y ofrece
+        // filas que ya no sabemos si siguen vigentes.
+        setCompanies([]);
         setLoading(false);
         toast.error(friendlyMessage);
       }

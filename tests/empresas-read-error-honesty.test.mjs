@@ -75,4 +75,9 @@ test("una lectura denegada no afirma que no hay empresas", () => {
     /No se pudo cargar el listado de empresas\./.test(page),
     "el estado vacio tiene que decir que no se pudo cargar"
   );
+  assert.ok(
+    /setLoadError\(friendlyMessage\);\s*\n\s*\/\//.test(page) &&
+      /setCompanies\(\[\]\);/.test(page),
+    "la lista anterior no puede quedar debajo del aviso: contradice el mensaje y ofrece filas que ya no se sabe si estan vigentes"
+  );
 });
