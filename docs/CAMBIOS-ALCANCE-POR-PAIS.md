@@ -23,10 +23,25 @@ de error existia pero expiraba.
   - las tarjetas de metrica muestran `—` en lugar de `0` o `$0.00 USD`,
   - el estado vacio dice "No se pudo cargar el listado de empresas." y no ofrece "Crear Primera
     Empresa",
-  - el banner se limpia solo cuando llega un snapshot con datos.
+  - el banner se limpia con **cualquier** snapshot entregado, incluido uno vacio: un snapshot
+    entregado prueba que la lectura funciona. Retirarlo solo cuando hay documentos dejaria una
+    coleccion legitimamente vacia mostrando "no se pudo cargar" para siempre despues de un error
+    transitorio.
 
 Lo que ve el usuario ante un rechazo ahora: el mensaje real ("No tienes permisos suficientes para
 realizar esta accion.") de forma persistente, en vez de un cero creible.
+
+### 2. El primer test del repo
+
+`tests/empresas-read-error-honesty.test.mjs` fija esas tres promesas sobre el texto fuente, sin
+dependencias:
+
+```bash
+node --test tests/empresas-read-error-honesty.test.mjs
+```
+
+No prueba el render (no hay jsdom ni testing-library aca), pero si que las tres decisiones que hacen
+honesta la pantalla sigan en pie.
 
 ## Como verificarlo
 

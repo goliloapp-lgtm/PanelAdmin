@@ -95,10 +95,11 @@ export default function EmpresasPage() {
     const unsubscribe = subscribeToB2BCompanies(
       (data) => {
         setCompanies(data);
-        // Solo un snapshot con datos retira el aviso: un listado vacío es justo
-        // lo que mostró el incidente, así que no prueba que la lectura volvió a
-        // funcionar.
-        if (data.length > 0) setLoadError(null);
+        // Cualquier snapshot ENTREGADO prueba que la lectura funciona, incluso uno
+        // vacio. La version anterior solo retiraba el aviso si habia documentos, y
+        // eso dejaba una coleccion legitimamente vacia mostrando "no se pudo
+        // cargar" para siempre despues de un error transitorio.
+        setLoadError(null);
         setLoading(false);
       },
       (err) => {
@@ -107,9 +108,9 @@ export default function EmpresasPage() {
           err,
           "No pudimos cargar el listado de empresas."
         );
-        // El toast se agota en segundos; este estado se queda hasta que la
-        // lectura vuelva a entregar datos, para que un rechazo de permisos no
-        // se vea nunca como "no hay empresas".
+        // El toast se agota en segundos; este estado se queda hasta que llegue
+        // un snapshot nuevo, para que un rechazo de permisos no se vea nunca
+        // como "no hay empresas".
         setLoadError(friendlyMessage);
         setLoading(false);
         toast.error(friendlyMessage);
