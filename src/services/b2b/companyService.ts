@@ -148,8 +148,10 @@ export const subscribeToB2BCompanies = (
           "[companyService] Firestore read error on companies:",
           error?.code || error?.message
         );
+        // Un rechazo de lectura (permission-denied, red) no es una colección
+        // vacía: si aquí se entregara [] la pantalla mostraría "0 empresas" y
+        // un admin no podría distinguir la denegación de una lista sin datos.
         if (onError) onError(error);
-        callback([]);
       }
     );
   });
