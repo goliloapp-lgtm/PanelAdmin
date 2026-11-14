@@ -69,6 +69,7 @@ export default function EmpresasPage() {
   const { isEn } = useLanguage();
   const [companies, setCompanies] = useState<B2BCompany[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [openModal, setOpenModal] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<B2BCompany | null>(null);
@@ -94,12 +95,24 @@ export default function EmpresasPage() {
     const unsubscribe = subscribeToB2BCompanies(
       (data) => {
         setCompanies(data);
+        // Solo un snapshot con datos retira el aviso: un listado vacío es justo
+        // lo que mostró el incidente, así que no prueba que la lectura volvió a
+        // funcionar.
+        if (data.length > 0) setLoadError(null);
         setLoading(false);
       },
       (err) => {
         console.error("[EmpresasPage] Error suscribiéndose a empresas:", err);
+        const friendlyMessage = formatFriendlyError(
+          err,
+          "No pudimos cargar el listado de empresas."
+        );
+        // El toast se agota en segundos; este estado se queda hasta que la
+        // lectura vuelva a entregar datos, para que un rechazo de permisos no
+        // se vea nunca como "no hay empresas".
+        setLoadError(friendlyMessage);
         setLoading(false);
-        toast.error(formatFriendlyError(err, "No pudimos cargar el listado de empresas."));
+        toast.error(friendlyMessage);
       }
     );
     return () => unsubscribe();
@@ -224,6 +237,19 @@ export default function EmpresasPage() {
     );
   });
 
+  // Un rechazo de lectura no es una colección vacía: sin este mensaje la tabla
+  // afirmaba "no hay empresas ... todavía" sobre una lectura denegada.
+  const emptyMessage = loadError
+    ? "No se pudo cargar el listado de empresas."
+    : search
+    ? "No se encontraron empresas con ese criterio de búsqueda."
+    : "No hay empresas B2B registradas todavía.";
+
+  // Con la lectura rechazada no se conoce ningún conteo ni saldo: mostrar 0 o
+  // "0.00 USD" afirmaría que la cartera está vacía, que es la mentira que el
+  // cliente reportó como "la empresa que creé no aparece".
+  const metricValue = (value: string | number) => (loadError ? "—" : value);
+
   return (
     <PageContainer
       title="Empresas B2B | Lilo El Salvador"
@@ -269,6 +295,16 @@ export default function EmpresasPage() {
         </Stack>
       </Box>
 
+      {/* El permiso denegado se ve como aviso permanente y no como lista vacía */}
+      {loadError && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          <Typography variant="subtitle2" fontWeight={700}>
+            No se pudo cargar el listado de empresas B2B
+          </Typography>
+          <Typography variant="body2">{loadError}</Typography>
+        </Alert>
+      )}
+
       {/* Métricas rápidas */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid size={{ xs: 12, sm: 4 }}>
@@ -278,7 +314,7 @@ export default function EmpresasPage() {
                 Empresas Registradas
               </Typography>
               <Typography variant="h4" fontWeight={700} sx={{ mt: 0.5 }}>
-                {companies.length}
+                {metricValue(companies.length)}
               </Typography>
             </CardContent>
           </Card>
@@ -290,7 +326,7 @@ export default function EmpresasPage() {
                 Empresas Activas
               </Typography>
               <Typography variant="h4" fontWeight={700} color="success.main" sx={{ mt: 0.5 }}>
-                {companies.filter((c) => c.status === "active").length}
+                {metricValue(companies.filter((c) => c.status === "active").length)}
               </Typography>
             </CardContent>
           </Card>
@@ -302,11 +338,11 @@ export default function EmpresasPage() {
                 Saldo Global por Cobrar
               </Typography>
               <Typography variant="h4" fontWeight={700} color="primary.main" sx={{ mt: 0.5 }}>
-                $
-                {companies
-                  .reduce((acc, c) => acc + (c.balance || 0), 0)
-                  .toFixed(2)}{" "}
-                USD
+                {metricValue(
+                  `$${companies
+                    .reduce((acc, c) => acc + (c.balance || 0), 0)
+                    .toFixed(2)} USD`
+                )}
               </Typography>
             </CardContent>
           </Card>
@@ -338,11 +374,9 @@ export default function EmpresasPage() {
           <Box sx={{ py: 6, textAlign: "center" }}>
             <IconBuilding size={48} color="#94A3B8" />
             <Typography variant="h6" color="text.secondary" sx={{ mt: 1 }}>
-              {search
-                ? "No se encontraron empresas con ese criterio de búsqueda."
-                : "No hay empresas B2B registradas todavía."}
+              {emptyMessage}
             </Typography>
-            {!search && (
+            {!search && !loadError && (
               <Button
                 variant="outlined"
                 sx={{ mt: 2 }}
