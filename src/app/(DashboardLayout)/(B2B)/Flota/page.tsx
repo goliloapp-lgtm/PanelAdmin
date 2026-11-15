@@ -282,7 +282,7 @@ const B2BFlotaInventoryPage = () => {
                       {kpis.suv}
                     </Typography>
                     <Typography variant="caption" color="textSecondary">
-                      $0.67/km · Mín. $13.56 (20 km)
+                      Tarifa del país o negociada
                     </Typography>
                   </Box>
                   <IconCar size={34} color="#1976d2" />
@@ -303,7 +303,7 @@ const B2BFlotaInventoryPage = () => {
                       {kpis.pickup}
                     </Typography>
                     <Typography variant="caption" color="textSecondary">
-                      $0.67/km · Mín. $13.56 (20 km)
+                      Tarifa del país o negociada
                     </Typography>
                   </Box>
                   <IconTruck size={34} color="#49BEFF" />
@@ -324,7 +324,7 @@ const B2BFlotaInventoryPage = () => {
                       {kpis.microbus}
                     </Typography>
                     <Typography variant="caption" color="textSecondary">
-                      $0.90/km · Mín. $45.00 (50 km)
+                      Tarifa del país o negociada
                     </Typography>
                   </Box>
                   <IconBus size={34} color="#FFAE1F" />

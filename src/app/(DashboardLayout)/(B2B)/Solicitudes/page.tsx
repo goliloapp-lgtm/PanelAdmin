@@ -392,13 +392,15 @@ const B2BSolicitudesPage = () => {
         scheduledAt: st.scheduledPickupAt,
         createdAt: (st as any).createdAt || undefined,
         isImmediate: false,
-        estimatedDistanceKm: Number((st as any).chargedDistance || 15),
-        estimatedDurationMinutes: 25,
+        // Lo que la fila no sabe, no lo inventa: la distancia y la tarifa salen del
+        // documento de la reserva, y la que falta queda sin definir.
+        estimatedDistanceKm: (st as any).chargedDistance,
+        estimatedDurationMinutes: (st as any).durationMinutes,
         tariffApplied: {
           category: (st.categoryId as any) || "suv",
-          ratePerKm: 0.67,
-          minFare: 13.56,
-          baseDistanceKm: 20,
+          ratePerKm: (st as any).appliedFareRate,
+          minFare: (st as any).minimumApplied === true ? (st as any).farePrice : undefined,
+          baseDistanceKm: (st as any).billableDistance,
           calculatedAmount: st.totalAmount,
         },
         fareBreakdown: {

@@ -449,7 +449,7 @@ const B2BDashboardPage = () => {
                 <Box>
                   <Stack direction="row" justifyContent="space-between" mb={0.5}>
                     <Typography variant="body2" fontWeight={600}>
-                      SUV Corporativa (máx. 4 pax · $0.67/km)
+                      SUV Corporativa (máx. 4 pax)
                     </Typography>
                     <Typography variant="body2" fontWeight={700}>
                       {metrics.byCategory.suv} servicios
@@ -466,7 +466,7 @@ const B2BDashboardPage = () => {
                 <Box>
                   <Stack direction="row" justifyContent="space-between" mb={0.5}>
                     <Typography variant="body2" fontWeight={600}>
-                      Pick-up Doble Cabina (máx. 4 pax · $0.67/km)
+                      Pick-up Doble Cabina (máx. 4 pax)
                     </Typography>
                     <Typography variant="body2" fontWeight={700}>
                       {metrics.byCategory.pickup} servicios
@@ -485,7 +485,7 @@ const B2BDashboardPage = () => {
                 <Box>
                   <Stack direction="row" justifyContent="space-between" mb={0.5}>
                     <Typography variant="body2" fontWeight={600}>
-                      Microbús Corporativo (máx. 12 pax · $0.90/km)
+                      Microbús Corporativo (máx. 12 pax)
                     </Typography>
                     <Typography variant="body2" fontWeight={700}>
                       {metrics.byCategory.microbus} servicios

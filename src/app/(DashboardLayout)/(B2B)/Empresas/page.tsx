@@ -423,9 +423,11 @@ export default function EmpresasPage() {
                         color="primary"
                         variant="outlined"
                         label={
-                          isEn
-                            ? `B2B · $${Number(c.negotiatedFareRate ?? 0.67).toFixed(2)}/km`
-                            : `Corporativo · $${Number(c.negotiatedFareRate ?? 0.67).toFixed(2)}/km`
+                          typeof c.negotiatedFareRate === "number"
+                            ? `${isEn ? "B2B" : "Corporativo"} · $${c.negotiatedFareRate.toFixed(2)}/km`
+                            : isEn
+                            ? "B2B · country rate"
+                            : "Corporativo · tarifa del país"
                         }
                         sx={{ fontWeight: 700 }}
                       />

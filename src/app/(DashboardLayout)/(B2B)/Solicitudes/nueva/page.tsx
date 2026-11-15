@@ -302,6 +302,19 @@ const NuevaSolicitudB2BPage = () => {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
+    // El precio es autoridad del backend: sin `getFareQuote` no hay importe que
+    // mostrar ni que mandar. Antes se caia a `tariffBreakdown.finalFare`, una
+    // segunda implementacion de la formula que podia cobrar distinto de lo que el
+    // panel mostraba.
+    if (!backendQuote) {
+      setError(
+        isEn
+          ? "There is no official quote for this trip yet. Wait for it, or check the distance and the vehicle category: the request cannot be registered with a price the platform did not compute."
+          : "Todavia no hay cotizacion oficial para este viaje. Esperala, o revisa la distancia y la categoria del vehiculo: la solicitud no se puede registrar con un precio que la plataforma no calculo."
+      );
+      return;
+    }
+
     e.preventDefault();
     if (passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY) {
       setError(
@@ -475,16 +488,16 @@ const NuevaSolicitudB2BPage = () => {
           ? new Date().toISOString()
           : effectiveScheduledIso,
         isImmediate,
-        estimatedDistanceKm: backendQuote ? backendQuote.chargedDistance : tariffBreakdown.billableDistanceKm,
+        estimatedDistanceKm: backendQuote.chargedDistance,
         estimatedDurationMinutes: tariffBreakdown.estimatedDurationMinutes,
         tariffApplied: {
           category: vehicleCategory,
-          ratePerKm: backendQuote ? backendQuote.appliedFareRate : tariffBreakdown.ratePerKm,
+          ratePerKm: backendQuote.appliedFareRate,
           minFare: tariffBreakdown.minFare,
           baseDistanceKm: tariffBreakdown.baseDistanceKm,
-          calculatedAmount: backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare,
+          calculatedAmount: backendQuote.totalAmount ?? backendQuote.farePrice,
         },
-        finalAmount: backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare,
+        finalAmount: backendQuote.totalAmount ?? backendQuote.farePrice,
         status: "requested",
         notes: notes.trim() || "",
         reason: platformReason.trim(),
@@ -1002,16 +1015,16 @@ const NuevaSolicitudB2BPage = () => {
                         value="suv"
                         disabled={!allowedCategories.includes("suv")}
                       >
-                        SUV Corporativa (Máx. 4 pasajeros) — $0.67/km · Mín. $13.56
+                        SUV Corporativa (Máx. 4 pasajeros)
                       </MenuItem>
                       <MenuItem
                         value="pickup"
                         disabled={!allowedCategories.includes("pickup")}
                       >
-                        Pick-up Doble Cabina (Máx. 4 pasajeros) — $0.67/km · Mín. $13.56
+                        Pick-up Doble Cabina (Máx. 4 pasajeros)
                       </MenuItem>
                       <MenuItem value="microbus">
-                        Microbús Corporativo (Máx. 12 pasajeros) — $0.90/km · Mín. $45.00
+                        Microbús Corporativo (Máx. 12 pasajeros)
                       </MenuItem>
                     </TextField>
                   </Grid>
@@ -1218,7 +1231,9 @@ const NuevaSolicitudB2BPage = () => {
                       Tarifa por Kilómetro:
                     </Typography>
                     <Typography variant="body2" fontWeight={600}>
-                      ${backendQuote ? backendQuote.appliedFareRate.toFixed(2) : tariffBreakdown.ratePerKm.toFixed(2)} USD / km
+                      {backendQuote
+                        ? `$${backendQuote.appliedFareRate.toFixed(2)} USD / km`
+                        : "—"}
                     </Typography>
                   </Stack>
 
@@ -1273,14 +1288,22 @@ const NuevaSolicitudB2BPage = () => {
                       fontWeight={800}
                       color="primary.main"
                     >
-                      ${(backendQuote ? (backendQuote.totalAmount ?? backendQuote.farePrice) : tariffBreakdown.finalFare).toFixed(2)}
+                      {backendQuote
+                        ? `$${(backendQuote.totalAmount ?? backendQuote.farePrice).toFixed(2)}`
+                        : quoteLoading
+                        ? "—"
+                        : isEn
+                        ? "No quote"
+                        : "Sin cotización"}
                     </Typography>
                     <Typography variant="caption" color="textSecondary" display="block">
                       {backendQuote
                         ? backendQuote.minimumApplied
                           ? `Tarifa mínima aplicada: facturado a ${backendQuote.billableDistance.toFixed(1)} km (Ruta real: ${backendQuote.chargedDistance.toFixed(1)} km)`
                           : `Tarifa real aplicada (${backendQuote.chargedDistance.toFixed(1)} km × $${backendQuote.appliedFareRate.toFixed(2)}/km + IVA)`
-                        : tariffBreakdown.breakdownSummary}
+                        : isEn
+                        ? "The platform could not quote this trip: no amount is shown and the request cannot be sent."
+                        : "La plataforma no pudo cotizar este viaje: no se muestra un importe y la solicitud no se puede enviar."}
                     </Typography>
                   </Box>
 
@@ -1289,7 +1312,11 @@ const NuevaSolicitudB2BPage = () => {
                     variant="contained"
                     size="large"
                     fullWidth
-                    disabled={submitting || passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY}
+                    disabled={
+                      submitting ||
+                      !backendQuote ||
+                      passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY
+                    }
                     startIcon={<IconCheck size={20} />}
                     sx={{ mt: 2, py: 1.5, fontWeight: 700 }}
                   >
