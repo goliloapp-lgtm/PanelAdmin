@@ -73,3 +73,18 @@ test("las pantallas B2B no afirman tarifas que nadie leyó", () => {
     );
   }
 });
+
+test("la cotización del panel nombra la empresa (CF-98)", () => {
+  // Sin `companyId`, el backend cotiza como DIRECTA y muestra la tarifa del país
+  // mientras la reserva se cobra con la negociada: dos precios para el mismo viaje.
+  assert.match(
+    form,
+    /getFareQuoteCallable\(\s*companyId \? \{ legs, categoryId, companyId \}/,
+    "la cotización tiene que mandar la empresa"
+  );
+  assert.match(
+    form,
+    /tariffBreakdown\.estimatedDurationMinutes, companyId\]/,
+    "la empresa tiene que estar en las dependencias del efecto: si cambia, se recotiza"
+  );
+});

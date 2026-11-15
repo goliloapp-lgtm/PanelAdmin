@@ -175,6 +175,12 @@ export interface GetFareQuoteLegInput {
 export interface GetFareQuoteParams {
   legs: GetFareQuoteLegInput[];
   categoryId?: string;
+  /**
+   * La empresa por la que cotiza la plataforma (CF-98). Sin esto el backend cotiza
+   * como DIRECTA —tarifa del país— aunque la reserva se cree para una empresa, y el
+   * precio que ve el operador no es el que se cobra.
+   */
+  companyId?: string;
 }
 
 export interface FareQuote {

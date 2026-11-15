@@ -258,7 +258,11 @@ const NuevaSolicitudB2BPage = () => {
 
     let cancelled = false;
     setQuoteLoading(true);
-    getFareQuoteCallable({ legs, categoryId })
+    // La empresa va en el payload: la cotización oficial tiene que ser la de ESTA
+    // empresa. Sin ella, la plataforma cotiza como directa y toma la tarifa del país.
+    getFareQuoteCallable(
+      companyId ? { legs, categoryId, companyId } : { legs, categoryId }
+    )
       .then((res) => {
         if (!cancelled) {
           setBackendQuote(res.data.quote as any);
@@ -275,7 +279,7 @@ const NuevaSolicitudB2BPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [effectiveOneWayKm, vehicleCategory, roundTrip, tariffBreakdown.estimatedDurationMinutes]);
+  }, [effectiveOneWayKm, vehicleCategory, roundTrip, tariffBreakdown.estimatedDurationMinutes, companyId]);
 
   const selectedCompany = companies.find((c) => c.id === companyId);
   const selectedCostCenter = costCenters.find(
