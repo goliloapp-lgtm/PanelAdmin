@@ -107,9 +107,15 @@ const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
     // El documento guarda `contactAddress`. Leer `raw.address` devolvia siempre el
     // default, asi que el formulario mostraba una direccion que nadie escribio.
     address: raw.contactAddress || raw.address || "",
-    paymentCondition: raw.paymentCondition || "credit30",
+    // La condición de pago NO se inventa. El mapeo ponía `credit30` cuando el
+    // documento no la tenía, y la consola pintaba «Crédito 30» para una empresa sin
+    // condición: alguien podía facturar a crédito por un valor que nadie eligió. Vacío
+    // obliga a elegirla en el formulario, que la exige.
+    paymentCondition: (raw.paymentCondition ||
+      "") as B2BCompany["paymentCondition"],
     billingPeriod: raw.billingPeriod || "monthly",
-    requiresInvoice: raw.requiresInvoice !== false,
+    // Ausente es `false`: el documento no pidió comprobante.
+    requiresInvoice: raw.requiresInvoice === true,
     requiresCCF: Boolean(raw.requiresCCF),
     balance: typeof raw.balance === "number" ? raw.balance : 0,
     status: raw.status || "active",

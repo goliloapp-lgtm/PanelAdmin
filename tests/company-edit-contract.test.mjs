@@ -184,3 +184,24 @@ test("la lectura de contacto prefiere los campos del contrato", () => {
     );
   }
 });
+
+test("el mapeo no inventa condición de pago ni comprobante", () => {
+  // Ponía `credit30` cuando el documento no declaraba condición, y la consola
+  // pintaba «Crédito 30» para una empresa sin condición: un valor con efecto de
+  // facturación que nadie eligió.
+  const mapping = service.slice(
+    service.indexOf("const mapCompanySnap"),
+    service.indexOf("}) as B2BCompany;")
+  );
+
+  assert.equal(
+    /paymentCondition: raw\.paymentCondition \|\| "credit30"/.test(mapping),
+    false,
+    "volvió a inventar la condición de pago"
+  );
+  assert.match(
+    mapping,
+    /requiresInvoice: raw\.requiresInvoice === true/,
+    "el comprobante tiene que salir del documento"
+  );
+});
