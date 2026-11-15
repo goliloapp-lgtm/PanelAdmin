@@ -205,3 +205,17 @@ test("el mapeo no inventa condición de pago ni comprobante", () => {
     "el comprobante tiene que salir del documento"
   );
 });
+
+test("un error que nombra un estado no se disfraza de cancelación", () => {
+  // La regla 8 pedía sólo «cancel» + el código del error, y el formulario de reserva
+  // mostraba «no es posible cancelar este traslado» ante cualquier
+  // `failed-precondition`. El mensaje real —el único que dice qué arreglar— se
+  // perdía antes de llegar a la pantalla.
+  assert.equal(
+    /\(combined\.includes\("cancel"\) \|\| combined\.includes\("cancelar"\)\)/.test(friendly),
+    false,
+    "volvió a dispararse con la palabra «cancel» suelta"
+  );
+  assert.match(friendly, /cannot be cancelled/, "tiene que seguir reconociendo la negativa real");
+  assert.match(friendly, /already in progress/, "y la de un traslado en curso");
+});

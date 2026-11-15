@@ -150,13 +150,17 @@ export function formatFriendlyError(
   }
 
   // 8. Cancelación no permitida por estado del viaje
+  // SÓLO las frases con las que el backend NOMBRA la negativa a cancelar. Antes
+  // bastaba un mensaje que dijera «cancel» y trajera el código del error: cualquier
+  // `failed-precondition` que nombrara un estado se mostraba como «no es posible
+  // cancelar», y el mensaje real —el que dice qué arreglar— se perdía.
   if (
-    (combined.includes("cancel") || combined.includes("cancelar")) &&
-    (combined.includes("already") ||
-      combined.includes("status") ||
-      combined.includes("in_progress") ||
-      combined.includes("completed") ||
-      combined.includes("failed-precondition"))
+    combined.includes("cannot be cancelled") ||
+    combined.includes("cannot be canceled") ||
+    combined.includes("already in progress") ||
+    combined.includes("already completed") ||
+    combined.includes("is cancelled by the trip path") ||
+    combined.includes("nothing left to cancel")
   ) {
     return "No es posible cancelar este traslado porque ya se encuentra en curso o ya fue finalizado.";
   }
