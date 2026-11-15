@@ -427,12 +427,12 @@ export default function EmpresasPage() {
                         size="small"
                         color="primary"
                         variant="outlined"
+                        // La tarifa es POR CATEGORÍA (`fareRates/{categoryId}`). El
+                        // número global (`negotiatedFareRate`) está deprecado y podía no
+                        // coincidir con lo que el cotizador cobra: la lista no lo muestra
+                        // más. El detalle por categoría vive en el formulario de edición.
                         label={
-                          typeof c.negotiatedFareRate === "number"
-                            ? `${isEn ? "B2B" : "Corporativo"} · $${c.negotiatedFareRate.toFixed(2)}/km`
-                            : isEn
-                            ? "B2B · country rate"
-                            : "Corporativo · tarifa del país"
+                          isEn ? "B2B · per category" : "Corporativo · por categoría"
                         }
                         sx={{ fontWeight: 700 }}
                       />

@@ -30,6 +30,7 @@ const read = (path) => readFileSync(resolve(ROOT, path), "utf8");
 const service = read("src/services/b2b/companyService.ts");
 const friendly = read("src/utils/friendlyError.ts");
 const payloadBuilder = read("src/services/b2b/companyPayload.ts");
+const listPage = read("src/app/(DashboardLayout)/(B2B)/Empresas/page.tsx");
 
 test("la actualización manda contactAddress, que es el campo del contrato", () => {
   assert.match(
@@ -140,5 +141,23 @@ test("el alta no inventa una tarifa de una sola categoría", () => {
     /suv: negotiatedFareRate/.test(payloadBuilder),
     false,
     "volvió a fabricar la tarifa de SUV"
+  );
+});
+
+test("la lista no muestra la tarifa global deprecada", () => {
+  // El chip decía «Corporativo $0.57/km», el número global que ya no rige. Con
+  // tarifas por categoría, ese número podía no tener nada que ver con lo que el
+  // cotizador cobra.
+  // Se mira el ACCESO a la propiedad, no la palabra: el comentario que explica por
+  // qué no se usa la nombra, y eso no es una lectura.
+  assert.equal(
+    /\.negotiatedFareRate/.test(listPage),
+    false,
+    "la lista volvió a leer la tarifa global"
+  );
+  assert.match(
+    listPage,
+    /por categoría/,
+    "el chip tiene que decir que la tarifa es por categoría"
   );
 });
