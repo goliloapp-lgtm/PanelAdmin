@@ -49,6 +49,8 @@ export interface BillingCadenceDocument {
  */
 export interface B2BCompany {
   id: string;
+  /** Las tarifas por categoría de esta empresa: `{ [categoryId]: usdPerKm }`. */
+  fareRates?: Record<string, number>;
   tradeName: string;
   legalName: string;
   nit: string;

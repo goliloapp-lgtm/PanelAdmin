@@ -82,3 +82,32 @@ test("los llamados de plataforma mandan el país de la empresa", () => {
     assert.match(page, call, `${name} tiene que enviar countryId`);
   }
 });
+
+test("el estado del formulario sale del maestro, no de una lista escrita a mano", () => {
+  // El formulario ofrecía `inactive` mientras el validador sólo admitía dos: el
+  // estado se elegía, se enviaba y se descartaba en silencio. Ahora las opciones
+  // llegan de `listCompanyStatuses` (CF-97).
+  const form = read("src/app/(DashboardLayout)/(B2B)/_components/CompanyForm.tsx");
+
+  assert.match(form, /listCompanyStatusesCallable\(\)/, "tiene que pedir el maestro");
+  assert.match(form, /statuses\.map\(/, "las opciones tienen que salir del maestro");
+  assert.equal(
+    /oneOf\(\["active", "suspended", "inactive"\]\)/.test(form),
+    false,
+    "volvió a hardcodear el vocabulario del estado"
+  );
+  assert.equal(
+    /<MenuItem value="inactive">/.test(form),
+    false,
+    "volvió a ofrecer un estado fijo"
+  );
+});
+
+test("las tarifas por categoría se reenvían al callable", () => {
+  // El campo global está deprecado; el que rige es `fareRates`, por categoría.
+  assert.match(
+    service,
+    /fareRates: companyData\.fareRates/,
+    "updateB2BCompany tiene que reenviar fareRates"
+  );
+});

@@ -440,6 +440,11 @@ export const updateB2BCompany = async (
     ...(companyData.paymentCondition ? { paymentCondition: companyData.paymentCondition } : {}),
     ...(companyData.billingPeriod ? { billingPeriod: companyData.billingPeriod } : {}),
     ...(typeof companyData.requiresCCF === "boolean" ? { requiresCCF: companyData.requiresCCF } : {}),
+    // Las tarifas por categoría: el campo global (`negotiatedFareRate`) está
+    // deprecado y este callable no lo acepta; el que rige es `fareRates`.
+    ...(companyData.fareRates && Object.keys(companyData.fareRates).length > 0
+      ? { fareRates: companyData.fareRates }
+      : {}),
     ...(companyData.status === "active" || companyData.status === "suspended"
       ? { status: companyData.status }
       : {}),

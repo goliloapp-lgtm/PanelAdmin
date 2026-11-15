@@ -18,6 +18,10 @@ import {
 import toast from "react-hot-toast";
 import { useFormik } from "formik";
 import * as yup from "yup";
+import {
+  listCompanyStatusesCallable,
+  type CompanyStatusOption,
+} from "@/utils/functions";
 import CustomTextField from "@/app/(DashboardLayout)/components/forms/theme-elements/CustomTextField";
 import {
   B2BCompany,
@@ -80,7 +84,8 @@ const validationSchema = yup.object({
     .typeError("Ingresa los minutos de anticipación")
     .min(0, "Debe ser mayor o igual a 0")
     .required("Anticipación mínima obligatoria"),
-  status: yup.string().oneOf(["active", "suspended", "inactive"]),
+  // La pertenencia la decide el maestro: acá sólo se exige que haya uno.
+  status: yup.string().required("Selecciona el estado de la cuenta"),
 });
 
 export const CompanyForm: React.FC<CompanyFormProps> = ({
@@ -91,10 +96,16 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
 }) => {
   const isEditing = Boolean(initialData);
   const [cadences, setCadences] = useState<BillingCadenceDocument[]>([]);
+  // El vocabulario del estado sale del maestro `companyStatuses` (CF-97). Antes
+  // estaba escrito acá y ofrecía `inactive`, que el backend descartaba callado.
+  const [statuses, setStatuses] = useState<CompanyStatusOption[]>([]);
 
   useEffect(() => {
     if (open) {
       getBillingCadences().then((list) => setCadences(list));
+      listCompanyStatusesCallable()
+        .then((res) => setStatuses(res.data?.statuses ?? []))
+        .catch(() => setStatuses([]));
     }
   }, [open]);
 
@@ -342,9 +353,17 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
                 value={formik.values.status}
                 onChange={formik.handleChange}
               >
-                <MenuItem value="active">Activa</MenuItem>
-                <MenuItem value="suspended">Suspendida</MenuItem>
-                <MenuItem value="inactive">Inactiva</MenuItem>
+                {statuses.length === 0 ? (
+                  <MenuItem value="" disabled>
+                    Cargando estados…
+                  </MenuItem>
+                ) : (
+                  statuses.map((option) => (
+                    <MenuItem key={option.status} value={option.status}>
+                      {option.label}
+                    </MenuItem>
+                  ))
+                )}
               </CustomTextField>
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>

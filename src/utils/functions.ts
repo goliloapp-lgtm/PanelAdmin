@@ -1211,6 +1211,19 @@ export const listPlatformScheduledTripsCallable = httpsCallable<
   { scheduledTrips: PlatformScheduledTripRow[]; count: number }
 >(functions, "listPlatformScheduledTrips");
 
+// --- CF-97: listCompanyStatuses (el maestro de estados de una empresa) ---
+export interface CompanyStatusOption {
+  status: string;
+  label: string;
+  isOperable: boolean;
+  order: number;
+}
+
+export const listCompanyStatusesCallable = httpsCallable<
+  Record<string, never>,
+  { statuses: CompanyStatusOption[] }
+>(functions, "listCompanyStatuses");
+
 // --- CF-84: listCostCentreRequests y resolveCostCentreRequest ---
 export interface CostCentreRequestRow {
   requestId: string;
