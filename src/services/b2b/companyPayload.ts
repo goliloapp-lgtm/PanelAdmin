@@ -74,8 +74,11 @@ export function buildCreateCompanyFareRatesMap(
     return map;
   }
 
-  const negotiatedFareRate = parsePositiveRate(data.negotiatedFareRate, 0.67) ?? 0.67;
-  return { suv: negotiatedFareRate };
+  // El campo global está deprecado y el formulario ya no lo pide. Fabricar
+  // `{ suv: 0.67 }` era peor que no mandar nada: creaba la empresa con una tarifa
+  // de una sola categoría que nadie había decidido. Sin tarifas explícitas, la
+  // empresa nace sin tarifas negociadas y rige la del país.
+  return {};
 }
 
 /**

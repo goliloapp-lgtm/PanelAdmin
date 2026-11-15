@@ -29,6 +29,7 @@ const read = (path) => readFileSync(resolve(ROOT, path), "utf8");
 
 const service = read("src/services/b2b/companyService.ts");
 const friendly = read("src/utils/friendlyError.ts");
+const payloadBuilder = read("src/services/b2b/companyPayload.ts");
 
 test("la actualización manda contactAddress, que es el campo del contrato", () => {
   assert.match(
@@ -109,5 +110,35 @@ test("las tarifas por categoría se reenvían al callable", () => {
     service,
     /fareRates: companyData\.fareRates/,
     "updateB2BCompany tiene que reenviar fareRates"
+  );
+});
+
+test("la matriz de tarifas se arma con el catálogo, no con una lista fija", () => {
+  // Una categoría nueva con `b2bSuitable: true` tiene que aparecer sola, con su
+  // tarifa editable por empresa: las filas vienen de `listCompanyRates`, que
+  // recorre el catálogo, y se recorren con `map`.
+  const form = read("src/app/(DashboardLayout)/(B2B)/_components/CompanyForm.tsx");
+
+  assert.match(form, /listCompanyRatesCallable\(/, "tiene que pedir las tarifas del catálogo");
+  assert.match(form, /rateRows\.map\(/, "las filas se recorren, no se enumeran");
+  assert.equal(
+    /negotiatedFareRate/.test(form),
+    false,
+    "volvió el campo global deprecado"
+  );
+  assert.equal(
+    /name="minimumBookingLeadMinutes"/.test(form.split("{!isEditing && (")[1] ?? ""),
+    false,
+    "al editar, la anticipación es un campo que no guarda nada"
+  );
+});
+
+test("el alta no inventa una tarifa de una sola categoría", () => {
+  // Fabricaba `{ suv: 0.67 }` cuando no había tarifa explícita: creaba la empresa
+  // con un precio que nadie decidió y una sola categoría.
+  assert.equal(
+    /suv: negotiatedFareRate/.test(payloadBuilder),
+    false,
+    "volvió a fabricar la tarifa de SUV"
   );
 });

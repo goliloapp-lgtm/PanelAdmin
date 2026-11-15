@@ -66,7 +66,7 @@ test("buildCreateCompanyPayload emite fareRates como objeto mapa compatible con 
   const payload = buildCreateCompanyPayload(buildBaseFormData() as any);
 
   assert.equal(Array.isArray(payload.fareRates), false);
-  assert.deepEqual(payload.fareRates, { suv: 0.67 });
+  assert.equal(payload.fareRates, undefined);
 
   assert.doesNotThrow(() => validateCompanyBasics(payload));
   assert.equal(validateBillingPeriod(payload.billingPeriod, ACTIVE_CADENCES), "monthly");
@@ -77,7 +77,7 @@ test("buildCreateCompanyPayload emite fareRates como objeto mapa compatible con 
   assert.doesNotThrow(() => validateCompanyAdmin(payload.admin));
 
   const validatedRates = validateFareRates(payload.fareRates, KNOWN_B2B_CATEGORIES);
-  assert.deepEqual(validatedRates, { suv: 0.67 });
+  assert.deepEqual(validatedRates, {});
 });
 
 test("buildCreateCompanyPayload mapea fareRatesList a Record<categoryId, fareRate> y convierte strings numéricos", () => {

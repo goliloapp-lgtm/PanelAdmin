@@ -20,6 +20,7 @@ import { useFormik } from "formik";
 import * as yup from "yup";
 import {
   listCompanyStatusesCallable,
+  listCompanyRatesCallable,
   type CompanyStatusOption,
 } from "@/utils/functions";
 import CustomTextField from "@/app/(DashboardLayout)/components/forms/theme-elements/CustomTextField";
@@ -74,16 +75,6 @@ const validationSchema = yup.object({
       "El período catorcenal ('biweekly') está retirado. Selecciona Diario, Semanal, Quincenal (15 y último día) o Mensual."
     )
     .required("Selecciona la cadencia de facturación"),
-  negotiatedFareRate: yup
-    .number()
-    .typeError("Ingresa una tarifa válida")
-    .positive("La tarifa negociada debe ser mayor a $0.00")
-    .required("La tarifa negociada por km es obligatoria"),
-  minimumBookingLeadMinutes: yup
-    .number()
-    .typeError("Ingresa los minutos de anticipación")
-    .min(0, "Debe ser mayor o igual a 0")
-    .required("Anticipación mínima obligatoria"),
   // La pertenencia la decide el maestro: acá sólo se exige que haya uno.
   status: yup.string().required("Selecciona el estado de la cuenta"),
 });
@@ -99,6 +90,12 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
   // El vocabulario del estado sale del maestro `companyStatuses` (CF-97). Antes
   // estaba escrito acá y ofrecía `inactive`, que el backend descartaba callado.
   const [statuses, setStatuses] = useState<CompanyStatusOption[]>([]);
+  // La matriz de tarifas sale del CATÁLOGO, no de una lista fija: una categoría
+  // nueva con `b2bSuitable: true` aparece sola, con su tarifa editable por empresa.
+  const [rateRows, setRateRows] = useState<
+    { categoryId: string; categoryName: string; fareRate: number; hasNegotiatedRate: boolean }[]
+  >([]);
+  const [rateInputs, setRateInputs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (open) {
@@ -108,6 +105,33 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
         .catch(() => setStatuses([]));
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !initialData?.id) {
+      setRateRows([]);
+      setRateInputs({});
+      return;
+    }
+    listCompanyRatesCallable({
+      companyId: initialData.id,
+      countryId: (initialData.countryId || "sv").toLowerCase(),
+    })
+      .then((res) => {
+        const rows = res.data?.rates ?? [];
+        setRateRows(rows);
+        // Solo lo NEGOCIADO se precarga: lo que viene del país queda vacío, y el
+        // placeholder muestra la tarifa que rige hoy.
+        const inputs: Record<string, string> = {};
+        for (const row of rows) {
+          if (row.hasNegotiatedRate) inputs[row.categoryId] = String(row.fareRate);
+        }
+        setRateInputs(inputs);
+      })
+      .catch(() => {
+        setRateRows([]);
+        setRateInputs({});
+      });
+  }, [open, initialData?.id, initialData?.countryId]);
 
   const normalizePaymentCondition = (raw?: string): PaymentCondition => {
     if (raw === "credit_15" || raw === "credit15") return "credit15";
@@ -133,7 +157,6 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
           ? "semi-monthly"
           : initialData?.billingPeriod || "monthly"
       ) as BillingPeriodId,
-      negotiatedFareRate: initialData?.negotiatedFareRate ?? 0.67,
       minimumBookingLeadMinutes: initialData?.minimumBookingLeadMinutes ?? 180,
       creditLimit: initialData?.creditLimit ?? null,
       requiresInvoice: initialData?.requiresInvoice ?? true,
@@ -146,7 +169,16 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
     validationSchema,
     onSubmit: async (values, { setSubmitting }) => {
       try {
-        await onSubmit(values);
+        // Las tarifas por categoría viajan como `fareRates`; el campo global está
+        // deprecado y `updateCompany` no lo acepta.
+        const fareRates: Record<string, number> = {};
+        for (const [categoryId, raw] of Object.entries(rateInputs)) {
+          const value = Number(raw);
+          if (raw.trim() !== "" && Number.isFinite(value) && value > 0) {
+            fareRates[categoryId] = value;
+          }
+        }
+        await onSubmit({ ...values, fareRates } as typeof values);
         formik.resetForm();
         onClose();
       } catch (err) {
@@ -366,29 +398,56 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
                 )}
               </CustomTextField>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <Typography variant="caption">
-                Tarifa Negociada por Km ($ USD / km) *
-              </Typography>
-              <CustomTextField
-                fullWidth
-                type="number"
-                inputProps={{ step: "0.01", min: "0.01" }}
-                name="negotiatedFareRate"
-                placeholder="0.67"
-                value={formik.values.negotiatedFareRate}
-                onChange={formik.handleChange}
-                error={
-                  formik.touched.negotiatedFareRate &&
-                  Boolean(formik.errors.negotiatedFareRate)
-                }
-                helperText={
-                  (formik.touched.negotiatedFareRate &&
-                    formik.errors.negotiatedFareRate) ||
-                  "Tarifa contractual B2B para El Salvador (ej. $0.67 USD/km)"
-                }
-              />
-            </Grid>
+            {!isEditing && (
+              <Grid size={{ xs: 12 }}>
+                <Alert severity="info">
+                  La empresa se crea con la tarifa del país en todas las categorías.
+                  Las tarifas negociadas se cargan editándola, con el catálogo completo.
+                </Alert>
+              </Grid>
+            )}
+            {isEditing && (
+              <Grid size={{ xs: 12 }}>
+                <Typography variant="subtitle2" color="primary" fontWeight={600}>
+                  Tarifas por Categoría (USD / km)
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block" mb={1}>
+                  Vacío = tarifa del país. El catálogo se arma solo: una categoría
+                  habilitada para B2B aparece acá con su tarifa editable.
+                </Typography>
+                {rateRows.length === 0 ? (
+                  <Typography variant="body2" color="textSecondary">
+                    Cargando categorías…
+                  </Typography>
+                ) : (
+                  <Grid container spacing={2}>
+                    {rateRows.map((row) => (
+                      <Grid size={{ xs: 12, sm: 6 }} key={row.categoryId}>
+                        <Typography variant="caption">{row.categoryName}</Typography>
+                        <CustomTextField
+                          fullWidth
+                          type="number"
+                          inputProps={{ step: "0.01", min: "0" }}
+                          value={rateInputs[row.categoryId] ?? ""}
+                          placeholder={row.fareRate.toFixed(2)}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            setRateInputs((current) => ({
+                              ...current,
+                              [row.categoryId]: e.target.value,
+                            }))
+                          }
+                          helperText={
+                            row.hasNegotiatedRate
+                              ? "Tarifa negociada de esta empresa"
+                              : `Rige la del país: $${row.fareRate.toFixed(2)}`
+                          }
+                        />
+                      </Grid>
+                    ))}
+                  </Grid>
+                )}
+              </Grid>
+            )}
             <Grid size={{ xs: 12, sm: 6 }}>
               <Typography variant="caption">
                 Techo de Consumo Inicial ($ USD) — Vacío = SIN LÍMITE
@@ -453,6 +512,10 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
             </Grid>
 
             {/* Parámetros Operativos B2B (G13, G14) */}
+            {/* La anticipación SÓLO se edita en el alta: `updateCompany` no acepta el
+                campo (vive en `updateCompanyCapabilities`), así que mostrarlo al
+                editar era un campo que no guardaba nada. */}
+            {!isEditing && (
             <Grid size={{ xs: 12, sm: 6 }}>
               <Typography variant="caption">Anticipación Mínima de Reserva (minutos) *</Typography>
               <CustomTextField
@@ -472,6 +535,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
                 }
               />
             </Grid>
+            )}
             <Grid size={{ xs: 12, sm: 6 }}>
               <Typography variant="caption">País de Operación Fiscal (G14)</Typography>
               <CustomTextField
