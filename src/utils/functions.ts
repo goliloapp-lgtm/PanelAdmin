@@ -1153,6 +1153,8 @@ export const listVehicleTypesCallable = httpsCallable<
 // --- CF-74: updateCompanyCapabilities ---
 export interface UpdateCompanyCapabilitiesParams {
   companyId: string;
+  /** El país de la empresa: sin él, un administrador multi-país no puede escribir. */
+  countryId: string;
   allowsImmediateTrips: boolean;
   allowsScheduledTrips: boolean;
   minimumBookingLeadMinutes: number;

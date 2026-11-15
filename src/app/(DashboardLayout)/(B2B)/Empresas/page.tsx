@@ -148,6 +148,9 @@ export default function EmpresasPage() {
       setSavingCap(true);
       await updateCompanyCapabilitiesCallable({
         companyId: capCompany.id,
+        // El país va SIEMPRE: un administrador que opera más de un país no puede
+        // dejar que el servidor adivine sobre qué empresa de qué país escribe.
+        countryId: (capCompany.countryId || "sv").toLowerCase(),
         allowsImmediateTrips: capImmediate,
         allowsScheduledTrips: capScheduled,
         minimumBookingLeadMinutes: Number(capLeadMinutes) || 180,
@@ -182,6 +185,7 @@ export default function EmpresasPage() {
       await resolveCostCentreRequestCallable({
         requestId: req.requestId,
         companyId: req.companyId,
+        countryId: (req.countryId || "sv").toLowerCase(),
         decision: "approved",
       });
       toast.success("Solicitud aprobada y nuevo centro de costo habilitado.");
@@ -201,6 +205,7 @@ export default function EmpresasPage() {
       await resolveCostCentreRequestCallable({
         requestId: selectedReqForReject.requestId,
         companyId: selectedReqForReject.companyId,
+        countryId: (selectedReqForReject.countryId || "sv").toLowerCase(),
         decision: "rejected",
         rejectionReason: rejectionReason.trim(),
       });

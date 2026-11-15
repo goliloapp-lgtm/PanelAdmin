@@ -67,3 +67,18 @@ test("el traductor de errores no convierte cualquier 'budget' en techo agotado",
   );
   assert.match(friendly, /raise the ceiling/, "tiene que seguir reconociendo el techo real");
 });
+
+test("los llamados de plataforma mandan el país de la empresa", () => {
+  // Un administrador que opera más de un país no puede dejar que el servidor
+  // adivine: `updateCompanyCapabilities` y `resolveCostCentreRequest` resuelven el
+  // alcance con el país del payload, y sin él rechazan con
+  // «was called by an operator of several countries».
+  const page = read("src/app/(DashboardLayout)/(B2B)/Empresas/page.tsx");
+
+  for (const [name, call] of [
+    ["updateCompanyCapabilities", /updateCompanyCapabilitiesCallable\(\{[\s\S]{0,220}?countryId:/],
+    ["resolveCostCentreRequest", /resolveCostCentreRequestCallable\(\{[\s\S]{0,220}?countryId:/],
+  ]) {
+    assert.match(page, call, `${name} tiene que enviar countryId`);
+  }
+});
