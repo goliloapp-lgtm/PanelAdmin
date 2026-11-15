@@ -219,3 +219,23 @@ test("un error que nombra un estado no se disfraza de cancelación", () => {
   assert.match(friendly, /cannot be cancelled/, "tiene que seguir reconociendo la negativa real");
   assert.match(friendly, /already in progress/, "y la de un traslado en curso");
 });
+
+test("el rechazo por techo se explica con sus cuatro números", () => {
+  // El servidor cuenta el techo, lo consumido, lo retenido y lo que pide la reserva,
+  // en inglés. El operador necesita esos números en su idioma para decidir: subir el
+  // techo, liberar una reserva o elegir otro servicio.
+  assert.match(friendly, /readCeilingRefusal/, "falta la regla del techo");
+  assert.match(
+    friendly,
+    /would be occupied against it/,
+    "tiene que reconocer la negativa P4 por su forma"
+  );
+  for (const captured of ["needs %s", "ceiling is %s", "%s is realised", "%s is reserved"]) {
+    assert.ok(
+      friendly.includes(captured),
+      `no lee el número de «${captured}»`
+    );
+  }
+  assert.match(friendly, /supera el techo de consumo/, "falta la frase que lo explica");
+  assert.match(friendly, /disponibles/, "tiene que decir cuánto queda");
+});

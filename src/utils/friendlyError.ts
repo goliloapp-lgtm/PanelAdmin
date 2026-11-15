@@ -3,6 +3,49 @@
  * Firestore, red o validaciones) en un mensaje claro, amable y en español
  * comprensible para cualquier usuario no técnico.
  */
+/**
+ * La negativa P4: la reserva no entra en el techo del centro de costo.
+ *
+ * El servidor la cuenta entera —techo, consumido, retenido y lo que pide la
+ * reserva— en inglés y con el vocabulario del dominio. El operador necesita esos
+ * cuatro números para decidir qué hacer, así que se leen del texto y se devuelven
+ * en una frase: cuánto hay, cuánto se gastó, cuánto queda y cuánto pide este viaje.
+ *
+ * @param {string} combined El texto del servidor en minúsculas.
+ * @return {string | undefined} La frase, o `undefined` si no es esta negativa.
+ */
+function readCeilingRefusal(combined: string): string | undefined {
+  if (!combined.includes("would be occupied against it")) return undefined;
+
+  const number = "([0-9]+(?:\\.[0-9]+)?)";
+  const pick = (pattern: string): number | undefined => {
+    const match = new RegExp(pattern.replace("%s", number)).exec(combined);
+    return match ? Number(match[1]) : undefined;
+  };
+
+  const needs = pick("needs %s");
+  const ceiling = pick("ceiling is %s");
+  const realised = pick("%s is realised") ?? 0;
+  const reserved = pick("%s is reserved") ?? 0;
+  const money = (value: number): string => `$${value.toFixed(2)}`;
+
+  const head =
+    "No se puede registrar esta reserva: supera el techo de consumo del centro " +
+    "de costo";
+
+  if (needs === undefined || ceiling === undefined) {
+    return `${head}.`;
+  }
+
+  const available = ceiling - realised - reserved;
+  return (
+    `${head}. Techo ${money(ceiling)}, consumido ${money(realised)}, ` +
+    `retenido ${money(reserved)} — disponibles ${money(available)} — y esta ` +
+    `reserva pide ${money(needs)}. Subí el techo del centro de costo, liberá una ` +
+    "reserva o elegí un servicio más económico."
+  );
+}
+
 export function formatFriendlyError(
   err: unknown,
   fallbackMessage = "No pudimos completar la operación en este momento. Por favor intenta nuevamente."
@@ -23,6 +66,11 @@ export function formatFriendlyError(
   const rawCode =
     typeof (err as any)?.code === "string" ? (err as any).code : "";
   const combined = `${rawCode} ${serverDetail} ${rawMessage}`.toLowerCase();
+
+  // 0. Techo de consumo (P4): la reserva no entra. Va primero porque es la única
+  // negativa que trae los cuatro números que el operador necesita para decidir.
+  const ceilingRefusal = readCeilingRefusal(combined);
+  if (ceilingRefusal !== undefined) return ceilingRefusal;
 
   // 1. Anticipación mínima de reserva (minimumBookingLeadMinutes)
   if (
