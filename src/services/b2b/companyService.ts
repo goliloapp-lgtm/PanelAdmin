@@ -98,7 +98,9 @@ const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
     phone: raw.phone || raw.contactPhone || "+503 2200-0000",
     whatsapp: raw.whatsapp || raw.phone || "+503 7000-0000",
     email: raw.email || "",
-    address: raw.address || "San Salvador, El Salvador",
+    // El documento guarda `contactAddress`. Leer `raw.address` devolvia siempre el
+    // default, asi que el formulario mostraba una direccion que nadie escribio.
+    address: raw.contactAddress || raw.address || "",
     paymentCondition: raw.paymentCondition || "credit30",
     billingPeriod: raw.billingPeriod || "monthly",
     requiresInvoice: raw.requiresInvoice !== false,
@@ -434,7 +436,7 @@ export const updateB2BCompany = async (
     ...(companyData.email ? { contactEmail: companyData.email.trim().toLowerCase() } : {}),
     ...(companyData.phone ? { contactPhone: companyData.phone.trim() } : {}),
     ...(companyData.whatsapp ? { contactWhatsapp: companyData.whatsapp.trim() } : {}),
-    ...(companyData.address ? { address: companyData.address.trim() } : {}),
+    ...(companyData.address ? { contactAddress: companyData.address.trim() } : {}),
     ...(companyData.paymentCondition ? { paymentCondition: companyData.paymentCondition } : {}),
     ...(companyData.billingPeriod ? { billingPeriod: companyData.billingPeriod } : {}),
     ...(typeof companyData.requiresCCF === "boolean" ? { requiresCCF: companyData.requiresCCF } : {}),

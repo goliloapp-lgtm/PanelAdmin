@@ -50,12 +50,15 @@ export function formatFriendlyError(
   }
 
   // 3. Presupuesto / Techo del centro de costo agotado
+  // Solo las frases con las que el backend NOMBRA el techo agotado. Antes entraba
+  // cualquier mensaje que dijera "budget" o "presupuesto", y el rechazo de
+  // `updateCompany` termina con "the balance to the budget ledger": cualquier
+  // invalid-argument de ese callable se mostraba como techo agotado.
   if (
     combined.includes("resource-exhausted") ||
-    combined.includes("budget") ||
-    combined.includes("ceiling") ||
-    combined.includes("techo de consumo") ||
-    combined.includes("presupuesto")
+    combined.includes("budgetlimit") ||
+    combined.includes("raise the ceiling") ||
+    combined.includes("techo de consumo")
   ) {
     return "El centro de costo seleccionado ha alcanzado su presupuesto máximo disponible para este periodo.";
   }
