@@ -95,9 +95,15 @@ const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
     tradeName: raw.tradeName || raw.name || raw.legalName || "Empresa B2B",
     legalName: raw.legalName || raw.name || raw.tradeName || "Empresa B2B",
     contactName: raw.contactName || raw.contactPerson || "Contacto Corporativo",
-    phone: raw.phone || raw.contactPhone || "+503 2200-0000",
-    whatsapp: raw.whatsapp || raw.phone || "+503 7000-0000",
-    email: raw.email || "",
+    // EL CONTRATO PRIMERO. El documento convivía con campos legacy (`phone`,
+    // `whatsapp`, `address`) que el panel ya no escribe: leerlos primero mostraba el
+    // valor VIEJO aunque el nuevo estuviera guardado en `contactPhone`,
+    // `contactWhatsapp` y `contactAddress`. Y `email` no miraba `contactEmail`, así
+    // que el correo recién guardado se veía vacío. Los legacy quedan de respaldo y
+    // no se inventa ningún teléfono: un contacto inventado es peor que uno vacío.
+    phone: raw.contactPhone || raw.phone || "",
+    whatsapp: raw.contactWhatsapp || raw.whatsapp || raw.phone || "",
+    email: raw.contactEmail || raw.email || "",
     // El documento guarda `contactAddress`. Leer `raw.address` devolvia siempre el
     // default, asi que el formulario mostraba una direccion que nadie escribio.
     address: raw.contactAddress || raw.address || "",

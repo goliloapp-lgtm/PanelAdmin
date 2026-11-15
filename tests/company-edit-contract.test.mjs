@@ -161,3 +161,26 @@ test("la lista no muestra la tarifa global deprecada", () => {
     "el chip tiene que decir que la tarifa es por categoría"
   );
 });
+
+test("la lectura de contacto prefiere los campos del contrato", () => {
+  // El documento del cliente tenía el valor NUEVO en `contactPhone`,
+  // `contactWhatsapp` y `contactEmail`, y el VIEJO en `phone`/`whatsapp`: el panel
+  // mostraba el viejo y el correo vacío, como si no hubiera guardado.
+  // Sólo el mapeo de EMPRESA: el del viajero tiene su propio default y es otra
+  // decisión.
+  const mapping = service.slice(
+    service.indexOf("const mapCompanySnap"),
+    service.indexOf("}) as B2BCompany;")
+  );
+
+  assert.match(mapping, /phone: raw\.contactPhone \|\| raw\.phone/, "phone tiene que leer contactPhone primero");
+  assert.match(mapping, /whatsapp: raw\.contactWhatsapp/, "whatsapp tiene que leer contactWhatsapp primero");
+  assert.match(mapping, /email: raw\.contactEmail/, "email tiene que leer contactEmail");
+  for (const invented of ["+503 2200-0000", "+503 7000-0000"]) {
+    assert.equal(
+      mapping.includes(invented),
+      false,
+      `volvió a inventar un contacto de empresa: ${invented}`
+    );
+  }
+});
