@@ -46,10 +46,17 @@ import { formatFriendlyError } from "@/utils/friendlyError";
 
 interface CostCenterManagerProps {
   companyId: string;
+  /**
+   * País de la empresa, resuelto por la pantalla de detalle. Obligatorio: sin
+   * él `getCostCenters`, `createCostCenter` y `updateCostCenter` completan
+   * "sv" y leen y escriben los centros de costo de otra empresa.
+   */
+  countryCode: string;
 }
 
 export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
   companyId,
+  countryCode,
 }) => {
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [limitRequests, setLimitRequests] = useState<LimitRequest[]>([]);
@@ -69,8 +76,8 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
     try {
       setLoading(true);
       const [centersData, auditData] = await Promise.all([
-        getCostCenters(companyId),
-        getLimitRequests(companyId),
+        getCostCenters(companyId, countryCode),
+        getLimitRequests(companyId, countryCode),
       ]);
       setCostCenters(centersData);
       setLimitRequests(auditData);
@@ -85,7 +92,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
     if (companyId) {
       fetchCostCentersAndAudit();
     }
-  }, [companyId]);
+  }, [companyId, countryCode]);
 
   const handleOpenCreate = () => {
     setEditingCenter(null);
@@ -134,19 +141,27 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
           {
             name: name.trim(),
             budgetLimit: parsedLimit,
+            // El motivo viaja en los DATOS: antes iba como cuarto argumento, que
+            // `updateCostCenter` interpreta como país, y el callable escribía en
+            // `countries/ajuste directo…/`.
+            reason: changeReason.trim() || "Ajuste directo de techo corporativo (CF-81)",
           },
-          changeReason.trim() || "Ajuste directo de techo corporativo"
+          countryCode
         );
         toast.success("Límite de presupuesto actualizado correctamente.");
       } else {
-        await createCostCenter(companyId, {
-          name: name.trim(),
-          department: name.trim(),
-          budgetLimit: parsedLimit,
-          spent: 0,
-          reserved: 0,
-          status: "active",
-        });
+        await createCostCenter(
+          companyId,
+          {
+            name: name.trim(),
+            department: name.trim(),
+            budgetLimit: parsedLimit,
+            spent: 0,
+            reserved: 0,
+            status: "active",
+          },
+          countryCode
+        );
         toast.success("Centro de costo creado con éxito.");
       }
       setOpenModal(false);

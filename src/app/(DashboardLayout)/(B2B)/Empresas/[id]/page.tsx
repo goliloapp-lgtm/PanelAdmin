@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -25,10 +26,14 @@ import {
   IconBuilding,
 } from "@tabler/icons-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import PageContainer from "@/app/(DashboardLayout)/components/container/PageContainer";
 import { B2BCompany } from "@/types/b2b";
-import { getB2BCompanyById, updateB2BCompany } from "@/services/b2b";
+import {
+  getB2BCompanyById,
+  getOperatingCountriesFromClaims,
+  updateB2BCompany,
+} from "@/services/b2b";
 import StatusBadge from "../../_components/StatusBadge";
 import CompanyBalanceCard from "../../_components/CompanyBalanceCard";
 import CostCenterManager from "../../_components/CostCenterManager";
@@ -37,26 +42,67 @@ import toast from "react-hot-toast";
 
 export default function EmpresaDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const companyId = params?.id as string;
 
   const [company, setCompany] = useState<B2BCompany | null>(null);
+  // País del path del que se leyó la empresa. Manda en TODA lectura y escritura
+  // de esta pantalla: la empresa puede vivir en cualquiera de los países donde
+  // opera la cuenta, no en un `sv` fijo, y el servicio no adivina el país.
+  const [companyCountry, setCompanyCountry] = useState<string>("");
+  // Empresa que no está en ninguno de los países del operador (o cuenta sin
+  // países declarados): se explica el caso en pantalla, sin caer a `sv`.
+  const [scopeMessage, setScopeMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [openEditModal, setOpenEditModal] = useState(false);
 
   const fetchCompany = async () => {
     try {
       setLoading(true);
-      const data = await getB2BCompanyById(companyId);
-      if (!data) {
-        toast.error("Empresa no encontrada");
-        router.push("/Empresas");
+      // Los países salen del MISMO claim `countryIds` que usa el listado: son
+      // los que evalúa `isInCountry()` en firestore.rules.
+      const operatingCountries = await getOperatingCountriesFromClaims();
+
+      if (operatingCountries.length === 0) {
+        setCompany(null);
+        setCompanyCountry("");
+        setScopeMessage(
+          "Tu cuenta no declara países donde operar. Pide a un administrador que asigne tu país para ver las empresas."
+        );
         return;
       }
-      setCompany(data);
+
+      // Se prueba `countries/{cc}/b2bCompanies/{id}` en el orden del claim y el
+      // primer hit gana. Ese país es el que después viaja a las escrituras.
+      let resolvedCompany: B2BCompany | null = null;
+      let resolvedCountry = "";
+      for (const countryCode of operatingCountries) {
+        const data = await getB2BCompanyById(companyId, countryCode);
+        if (data) {
+          resolvedCompany = data;
+          resolvedCountry = countryCode;
+          break;
+        }
+      }
+
+      if (!resolvedCompany) {
+        setCompany(null);
+        setCompanyCountry("");
+        setScopeMessage(
+          `La empresa ${companyId} no existe o no está en los países donde operás (${operatingCountries
+            .map((countryCode) => countryCode.toUpperCase())
+            .join(", ")}).`
+        );
+        return;
+      }
+
+      setScopeMessage(null);
+      setCompany(resolvedCompany);
+      setCompanyCountry(resolvedCountry);
     } catch (err) {
       console.error("Error fetching company:", err);
-      toast.error("Error al cargar datos de la empresa");
+      setCompany(null);
+      setCompanyCountry("");
+      setScopeMessage("No pudimos cargar los datos de la empresa.");
     } finally {
       setLoading(false);
     }
@@ -71,8 +117,16 @@ export default function EmpresaDetailPage() {
   const handleUpdate = async (
     data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt">
   ) => {
+    // Sin país resuelto no se escribe: el servicio completaría `sv` y esta
+    // pantalla nunca escribe en una ruta que no leyó.
+    if (!companyCountry) {
+      toast.error("No se pudo determinar el país de la empresa.");
+      throw new Error("country-not-resolved");
+    }
     try {
-      await updateB2BCompany(companyId, data);
+      // El país resuelto viaja en la escritura: los datos del formulario no
+      // deciden sobre qué ruta se escribe.
+      await updateB2BCompany(companyId, data, companyCountry);
       toast.success("Empresa actualizada");
       fetchCompany();
     } catch (err) {
@@ -89,7 +143,30 @@ export default function EmpresaDetailPage() {
     );
   }
 
-  if (!company) return null;
+  // La empresa no está en ningún país donde la cuenta opera: se dice, en vez de
+  // mostrar un perfil vacío o de rebotar al listado sin explicación.
+  if (scopeMessage) {
+    return (
+      <PageContainer
+        title="Empresa no disponible | Detalle Empresa B2B"
+        description="Perfil corporativo, datos fiscales y centros de costo"
+      >
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          {scopeMessage}
+        </Alert>
+        <Button
+          component={Link}
+          href="/Empresas"
+          startIcon={<IconArrowLeft size={18} />}
+          color="inherit"
+        >
+          Volver a Empresas
+        </Button>
+      </PageContainer>
+    );
+  }
+
+  if (!company || !companyCountry) return null;
 
   return (
     <PageContainer
@@ -224,7 +301,10 @@ export default function EmpresaDetailPage() {
             </Card>
 
             {/* Módulo de Centros de Costo */}
-            <CostCenterManager companyId={company.id} />
+            <CostCenterManager
+              companyId={company.id}
+              countryCode={companyCountry}
+            />
           </Stack>
         </Grid>
 
@@ -270,6 +350,7 @@ export default function EmpresaDetailPage() {
         onClose={() => setOpenEditModal(false)}
         onSubmit={handleUpdate}
         initialData={company}
+        countryId={companyCountry}
       />
     </PageContainer>
   );

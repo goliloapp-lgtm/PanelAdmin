@@ -50,10 +50,13 @@ import {
 
 export { buildCreateCompanyFareRatesMap, buildCreateCompanyPayload };
 
-const getCompanyCol = (countryCode = "sv") =>
+const getCompanyCol = (countryCode: string) =>
   collection(db, "countries", countryCode.toLowerCase(), "b2bCompanies");
 
-const getCompanyDoc = (companyId: string, countryCode = "sv") =>
+// Sin default: el país del path es una decisión del llamador. Completar "sv"
+// acá era la puerta por la que una empresa de otro país se leía y se escribía
+// en El Salvador.
+const getCompanyDoc = (companyId: string, countryCode: string) =>
   doc(db, "countries", countryCode.toLowerCase(), "b2bCompanies", companyId);
 
 const BILLING_CADENCES_COLLECTION = "billingCadences";
@@ -88,7 +91,16 @@ const sortCompaniesDesc = (companies: B2BCompany[]): B2BCompany[] => {
   });
 };
 
-const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
+/**
+ * `countryCode` es el país del PATH del que se leyó el documento y manda sobre
+ * `raw.countryId`: es el path que la regla evaluó, y una fila que pierde su país
+ * no se puede editar después (`getCompanyDoc`/`updateB2BCompany` caen a `"sv"`).
+ */
+const mapCompanySnap = (
+  id: string,
+  raw: Record<string, any>,
+  countryCode?: string
+): B2BCompany =>
   ({
     id,
     ...raw,
@@ -119,66 +131,159 @@ const mapCompanySnap = (id: string, raw: Record<string, any>): B2BCompany =>
     requiresCCF: Boolean(raw.requiresCCF),
     balance: typeof raw.balance === "number" ? raw.balance : 0,
     status: raw.status || "active",
-    countryId: raw.countryId || "sv",
+    countryId: (countryCode || raw.countryId || "sv").toLowerCase(),
   }) as B2BCompany;
 
-export const getB2BCompanies = async (countryCode = "sv"): Promise<B2BCompany[]> => {
-  try {
-    await auth.authStateReady();
-    const snapshot = await getDocs(getCompanyCol(countryCode));
-    const companies = snapshot.docs.map((docSnap) =>
-      mapCompanySnap(docSnap.id, docSnap.data())
-    );
+/**
+ * Países donde opera la cuenta, leídos del claim `countryIds` del ID token.
+ *
+ * Son exactamente los que evalúa `isInCountry(countryId)` en firestore.rules,
+ * así que no se derivan de otro campo ni se completan con `"sv"`: un operador
+ * con `countryIds: ["ve"]` no tiene permiso en `countries/sv` y esa lectura se
+ * denegaría. Una lista ausente o vacía significa "la cuenta no declara países
+ * donde operar", no "opera en El Salvador".
+ */
+export const getOperatingCountriesFromClaims = async (): Promise<string[]> => {
+  await auth.authStateReady();
+  const currentUser = auth.currentUser;
+  if (!currentUser) return [];
 
-    return sortCompaniesDesc(companies);
-  } catch (error) {
-    console.warn("[companyService] Error fetching companies:", error);
-    return [];
-  }
+  const tokenResult = await currentUser.getIdTokenResult();
+  const claimedCountries = tokenResult.claims.countryIds;
+  if (!Array.isArray(claimedCountries)) return [];
+
+  return Array.from(
+    new Set(
+      claimedCountries
+        .filter((code): code is string => typeof code === "string")
+        .map((code) => code.trim().toLowerCase())
+        .filter((code) => code.length > 0)
+    )
+  );
 };
 
-export const subscribeToB2BCompanies = (
+/** Fallo de lectura de UN país dentro de una suscripción multi-país. */
+export interface B2BCompaniesCountryFailure {
+  countryCode: string;
+  failedCountries: string[];
+}
+
+/**
+ * Suscribe a `countries/<país>/b2bCompanies` para cada país donde la cuenta
+ * puede operar y entrega UNA sola lista fusionada.
+ *
+ * - Se abre un `onSnapshot` por país (`N` países ⇒ `N` snapshots).
+ * - Las filas se de-duplican por `countryId + id` y se ordenan con el mismo
+ *   criterio global (`sortCompaniesDesc`), no por concatenación de países.
+ * - Si un país falla y otro responde, se entregan las filas leídas y el fallo
+ *   parcial sale por `onPartialError` (aviso no destructivo). `onError` se llama
+ *   sólo cuando fallaron TODOS los países: ahí no queda ninguna fila creíble.
+ */
+export const subscribeToB2BCompaniesByCountries = (
+  countries: string[],
   callback: (companies: B2BCompany[]) => void,
   onError?: (error: any) => void,
-  countryCode = "sv"
+  onPartialError?: (failure: B2BCompaniesCountryFailure) => void
 ) => {
-  let unsubscribeFirestore: (() => void) | null = null;
+  const normalizedCountries = Array.from(
+    new Set(
+      countries
+        .map((code) => (typeof code === "string" ? code.trim().toLowerCase() : ""))
+        .filter((code) => code.length > 0)
+    )
+  );
+
+  if (normalizedCountries.length === 0) {
+    // Sin países declarados no hay colección que leer: consultar sólo produciría
+    // un permiso denegado. La pantalla explica el caso con su propio mensaje.
+    return () => {};
+  }
+
+  const rowsByCountry = new Map<string, B2BCompany[]>();
+  const failedCountries = new Set<string>();
+  const unsubscribers: Array<() => void> = [];
   let cancelled = false;
+
+  const emitMerged = () => {
+    // El país forma parte de la identidad de la fila: dos países pueden tener el
+    // mismo id de documento y uno no puede tapar al otro.
+    const byCountryAndId = new Map<string, B2BCompany>();
+    rowsByCountry.forEach((rows) => {
+      rows.forEach((company) => {
+        byCountryAndId.set(`${company.countryId}:${company.id}`, company);
+      });
+    });
+
+    // El orden es global (alta descendente) sobre la lista fusionada.
+    callback(sortCompaniesDesc(Array.from(byCountryAndId.values())));
+  };
 
   auth.authStateReady().then(() => {
     if (cancelled) return;
 
-    unsubscribeFirestore = onSnapshot(
-      getCompanyCol(countryCode),
-      (snapshot) => {
-        const companies = snapshot.docs.map((docSnap) =>
-          mapCompanySnap(docSnap.id, docSnap.data())
-        );
+    normalizedCountries.forEach((countryCode) => {
+      unsubscribers.push(
+        onSnapshot(
+          getCompanyCol(countryCode),
+          (snapshot) => {
+            rowsByCountry.set(
+              countryCode,
+              snapshot.docs.map((docSnap) =>
+                mapCompanySnap(docSnap.id, docSnap.data(), countryCode)
+              )
+            );
+            failedCountries.delete(countryCode);
+            emitMerged();
+          },
+          (error) => {
+            console.warn(
+              "[companyService] Firestore read error on companies:",
+              countryCode,
+              error?.code || error?.message
+            );
+            failedCountries.add(countryCode);
 
-        callback(sortCompaniesDesc(companies));
-      },
-      (error) => {
-        console.warn(
-          "[companyService] Firestore read error on companies:",
-          error?.code || error?.message
-        );
-        // Un rechazo de lectura (permission-denied, red) no es una colección
-        // vacía: si aquí se entregara [] la pantalla mostraría "0 empresas" y
-        // un admin no podría distinguir la denegación de una lista sin datos.
-        if (onError) onError(error);
-      }
-    );
+            if (failedCountries.size === normalizedCountries.length) {
+              // Fallo TOTAL: ningún país respondió y la pantalla vacía la lista
+              // porque no hay fila creíble que mostrar.
+              if (onError) onError(error);
+              return;
+            }
+
+            // Fallo PARCIAL: las filas ya entregadas por otros países se
+            // conservan; la pantalla advierte la cobertura incompleta.
+            if (onPartialError) {
+              onPartialError({
+                countryCode,
+                failedCountries: Array.from(failedCountries),
+              });
+            }
+          }
+        )
+      );
+    });
   });
 
   return () => {
     cancelled = true;
-    if (unsubscribeFirestore) unsubscribeFirestore();
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
   };
 };
 
+/**
+ * Lectura de UN país: la firma que siguen usando las pantallas SV-only
+ * (DashboardB2B, DocumentosSV y Solicitudes). El directorio de Empresas ya no la
+ * usa — lee los países del token con `subscribeToB2BCompaniesByCountries`.
+ */
+export const subscribeToB2BCompanies = (
+  callback: (companies: B2BCompany[]) => void,
+  onError?: (error: any) => void,
+  countryCode = "sv"
+) => subscribeToB2BCompaniesByCountries([countryCode], callback, onError);
+
 export const getB2BCompanyById = async (
   id: string,
-  countryCode = "sv"
+  countryCode: string
 ): Promise<B2BCompany | null> => {
   try {
     await auth.authStateReady();
@@ -187,7 +292,7 @@ export const getB2BCompanyById = async (
     if (!snapshot.exists()) {
       return null;
     }
-    return mapCompanySnap(snapshot.id, snapshot.data());
+    return mapCompanySnap(snapshot.id, snapshot.data(), countryCode);
   } catch (error) {
     console.warn("[companyService] Error fetching company by id:", error);
     return null;
@@ -423,10 +528,13 @@ export const createB2BCompany = async (
   };
 };
 
+// El país es obligatorio: `updateB2BCompany` era el camino por el que una
+// empresa de otro país se guardaba en `countries/sv`. Los llamadores lo pasan
+// (el de la fila y el que resolvió el detalle).
 export const updateB2BCompany = async (
   id: string,
   data: Partial<Omit<B2BCompany, "id" | "createdAt" | "updatedAt">> & { reason?: string },
-  countryCode = "sv"
+  countryCode: string
 ): Promise<void> => {
   if (data.billingPeriod === "biweekly") {
     throw new Error(
@@ -434,7 +542,10 @@ export const updateB2BCompany = async (
     );
   }
   const { initialPassword: _ignored, ...companyData } = data;
-  const effectiveCountry = (companyData.countryId || countryCode || "sv").toLowerCase();
+  // El país de la fila manda sobre el `countryId` heredado del formulario (el
+  // que antes fijaba El Salvador), así que editar una empresa de otro país
+  // escribía en `countries/sv`. La pantalla pasa el país que leyó.
+  const effectiveCountry = (countryCode || companyData.countryId || "sv").toLowerCase();
 
   // CF-86 / D-A: Invocación oficial de updateCompany (cero escrituras directas a Firestore)
   await updateCompanyCallable({
@@ -467,7 +578,7 @@ export const updateB2BCompany = async (
 export const updateB2BCompanyStatus = async (
   id: string,
   status: B2BCompany["status"],
-  countryCode = "sv"
+  countryCode: string
 ): Promise<void> => {
   return updateB2BCompany(id, { status, countryId: countryCode }, countryCode);
 };

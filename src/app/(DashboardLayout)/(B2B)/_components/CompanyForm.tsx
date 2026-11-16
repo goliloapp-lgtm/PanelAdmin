@@ -40,6 +40,12 @@ interface CompanyFormProps {
   onClose: () => void;
   onSubmit: (data: Omit<B2BCompany, "id" | "createdAt" | "updatedAt"> & { minimumBookingLeadMinutes?: number }) => Promise<void>;
   initialData?: B2BCompany | null;
+  /**
+   * País resuelto por la pantalla que abre el formulario. Al editar, el país de
+   * la empresa (`initialData.countryId`) manda; al crear, este es el país de la
+   * ruta en la que la empresa nace.
+   */
+  countryId?: string;
 }
 
 const validationSchema = yup.object({
@@ -84,8 +90,13 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
   onClose,
   onSubmit,
   initialData,
+  countryId,
 }) => {
   const isEditing = Boolean(initialData);
+  // El país NO es una constante del formulario: al editar es el de la empresa
+  // (el que resolvió la pantalla) y al crear, el que declara el operador. Un
+  // `sv` fijo acá guardaba una empresa de otro país en `countries/sv`.
+  const formCountryId = (initialData?.countryId || countryId || "").toLowerCase();
   const [cadences, setCadences] = useState<BillingCadenceDocument[]>([]);
   // El vocabulario del estado sale del maestro `companyStatuses` (CF-97). Antes
   // estaba escrito acá y ofrecía `inactive`, que el backend descartaba callado.
@@ -114,7 +125,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
     }
     listCompanyRatesCallable({
       companyId: initialData.id,
-      countryId: (initialData.countryId || "sv").toLowerCase(),
+      countryId: formCountryId,
     })
       .then((res) => {
         const rows = res.data?.rates ?? [];
@@ -131,7 +142,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
         setRateRows([]);
         setRateInputs({});
       });
-  }, [open, initialData?.id, initialData?.countryId]);
+  }, [open, initialData?.id, formCountryId]);
 
   const normalizePaymentCondition = (raw?: string): PaymentCondition => {
     if (raw === "credit_15" || raw === "credit15") return "credit15";
@@ -163,7 +174,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
       requiresCCF: initialData?.requiresCCF ?? false,
       balance: initialData?.balance || 0,
       status: initialData?.status || ("active" as CompanyStatus),
-      countryId: "sv" as const,
+      countryId: formCountryId,
     },
     enableReinitialize: true,
     validationSchema,
@@ -195,7 +206,7 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Typography variant="h5" fontWeight={600}>
-          {isEditing ? "Editar Empresa B2B" : "Nueva Empresa B2B (El Salvador)"}
+          {isEditing ? "Editar Empresa B2B" : "Nueva Empresa B2B"}
         </Typography>
       </DialogTitle>
       <form onSubmit={formik.handleSubmit}>
@@ -541,8 +552,12 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
               <CustomTextField
                 fullWidth
                 disabled
-                value="El Salvador (sv)"
-                helperText="Resuelto para jurisdicción El Salvador"
+                value={formCountryId ? formCountryId.toUpperCase() : ""}
+                helperText={
+                  formCountryId
+                    ? "País de la empresa: lecturas y escrituras van a la ruta de ese país"
+                    : "Sin país declarado: la cuenta no declara países donde operar"
+                }
               />
             </Grid>
 

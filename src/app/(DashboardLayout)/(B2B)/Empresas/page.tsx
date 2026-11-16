@@ -24,6 +24,7 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  MenuItem,
 } from "@mui/material";
 import {
   IconBuilding,
@@ -49,7 +50,8 @@ import PageContainer from "@/app/(DashboardLayout)/components/container/PageCont
 import DashboardCard from "@/app/(DashboardLayout)/components/shared/DashboardCard";
 import { B2BCompany } from "@/types/b2b";
 import {
-  subscribeToB2BCompanies,
+  getOperatingCountriesFromClaims,
+  subscribeToB2BCompaniesByCountries,
   createB2BCompany,
   updateB2BCompany,
 } from "@/services/b2b";
@@ -70,6 +72,20 @@ export default function EmpresasPage() {
   const [companies, setCompanies] = useState<B2BCompany[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // La cuenta no declara países donde operar: no hay colección que consultar y
+  // el estado vacío lo explica en vez de mostrar un permiso denegado.
+  const [scopeNotice, setScopeNotice] = useState<string | null>(null);
+  // Cobertura incompleta: un país falló y sus filas faltan, pero las leídas se
+  // muestran. No es `loadError`, que vacía el listado.
+  const [coverageWarning, setCoverageWarning] = useState<string | null>(null);
+  // Países que declara la cuenta (claim `countryIds`). La bandeja de solicitudes
+  // de centros de costo trabaja de a UN país: con varios declarados el operador
+  // elige cuál, y esa elección sobrevive a aprobar y rechazar.
+  const [operatorCountries, setOperatorCountries] = useState<string[]>([]);
+  // País de trabajo de la consola: el único declarado (o el primero) y, con
+  // varios, el elegido en la bandeja. Es el país que se manda al callable
+  // —que acepta uno solo— y el del alta, para no crear la empresa en `sv`.
+  const [activeCountry, setActiveCountry] = useState<string>("");
   const [search, setSearch] = useState("");
   const [openModal, setOpenModal] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState<B2BCompany | null>(null);
@@ -92,35 +108,92 @@ export default function EmpresasPage() {
   const [rejectionReason, setRejectionReason] = useState("");
 
   useEffect(() => {
-    const unsubscribe = subscribeToB2BCompanies(
-      (data) => {
-        setCompanies(data);
-        // Cualquier snapshot ENTREGADO prueba que la lectura funciona, incluso uno
-        // vacio. La version anterior solo retiraba el aviso si habia documentos, y
-        // eso dejaba una coleccion legitimamente vacia mostrando "no se pudo
-        // cargar" para siempre despues de un error transitorio.
-        setLoadError(null);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("[EmpresasPage] Error suscribiéndose a empresas:", err);
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    getOperatingCountriesFromClaims()
+      .then((operatingCountries) => {
+        if (cancelled) return;
+
+        setOperatorCountries(operatingCountries);
+        setActiveCountry(operatingCountries[0] ?? "");
+
+        if (operatingCountries.length === 0) {
+          // Sin países declarados no se consulta ninguna colección: la regla la
+          // denegaría. El mensaje lo dice en vez de afirmar una cartera vacía.
+          setScopeNotice(
+            "Tu cuenta no declara países donde operar. Pide a un administrador que asigne tu país para ver las empresas."
+          );
+          setLoadError(null);
+          setLoading(false);
+          return;
+        }
+
+        const stop = subscribeToB2BCompaniesByCountries(
+          operatingCountries,
+          (data) => {
+            setCompanies(data);
+            // Cualquier snapshot ENTREGADO prueba que la lectura funciona, incluso uno
+            // vacio. La version anterior solo retiraba el aviso si habia documentos, y
+            // eso dejaba una coleccion legitimamente vacia mostrando "no se pudo
+            // cargar" para siempre despues de un error transitorio.
+            setLoadError(null);
+            setLoading(false);
+          },
+          (err) => {
+            console.error("[EmpresasPage] Error suscribiéndose a empresas:", err);
+            const friendlyMessage = formatFriendlyError(
+              err,
+              "No pudimos cargar el listado de empresas."
+            );
+            // El toast se agota en segundos; este estado se queda hasta que llegue
+            // un snapshot nuevo, para que un rechazo de permisos no se vea nunca
+            // como "no hay empresas".
+            setLoadError(friendlyMessage);
+            // La lista anterior tampoco sobrevive al aviso: mostrarla debajo de un
+            // cartel que dice que no se pudo cargar contradice el mensaje y ofrece
+            // filas que ya no sabemos si siguen vigentes. Sólo el fallo TOTAL la
+            // vacía: un país denegado no borra las filas de los demás.
+            setCompanies([]);
+            setLoading(false);
+            toast.error(friendlyMessage);
+          },
+          (failure) => {
+            // Fallo PARCIAL: se conservan las filas de los países que respondieron
+            // y el aviso explica qué cobertura falta. No toca `loadError` ni la
+            // lista, que es justamente lo que el error total sí hace.
+            const failed = failure.failedCountries
+              .map((countryCode) => countryCode.toUpperCase())
+              .join(", ");
+            setCoverageWarning(
+              `No pudimos cargar las empresas de ${failed}. El listado muestra solo las empresas de los países que respondieron.`
+            );
+          }
+        );
+
+        if (cancelled) {
+          stop();
+          return;
+        }
+        unsubscribe = stop;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[EmpresasPage] Error leyendo los países de la cuenta:", err);
         const friendlyMessage = formatFriendlyError(
           err,
-          "No pudimos cargar el listado de empresas."
+          "No pudimos leer los países donde opera tu cuenta."
         );
-        // El toast se agota en segundos; este estado se queda hasta que llegue
-        // un snapshot nuevo, para que un rechazo de permisos no se vea nunca
-        // como "no hay empresas".
         setLoadError(friendlyMessage);
-        // La lista anterior tampoco sobrevive al aviso: mostrarla debajo de un
-        // cartel que dice que no se pudo cargar contradice el mensaje y ofrece
-        // filas que ya no sabemos si siguen vigentes.
         setCompanies([]);
         setLoading(false);
         toast.error(friendlyMessage);
-      }
-    );
-    return () => unsubscribe();
+      });
+
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
   }, []);
 
   const handleOpenCreate = () => {
@@ -167,11 +240,13 @@ export default function EmpresasPage() {
     }
   };
 
-  const handleOpenRequests = async () => {
-    setRequestsModalOpen(true);
+  const loadCostCentreRequests = async (countryId: string) => {
     setLoadingRequests(true);
     try {
-      const res = await listCostCentreRequestsCallable({ countryId: "sv", status: "pending" });
+      const res = await listCostCentreRequestsCallable({
+        countryId,
+        status: "pending",
+      });
       setCostCentreRequests(res.data?.requests || []);
     } catch (err: any) {
       toast.error(formatFriendlyError(err, "No se pudieron cargar las solicitudes pendientes."));
@@ -180,12 +255,36 @@ export default function EmpresasPage() {
     }
   };
 
+  const handleOpenRequests = async () => {
+    setRequestsModalOpen(true);
+    if (!activeCountry) {
+      // Sin país declarado no hay ruta que listar: pedir el callable sin país lo
+      // haría resolver contra el default del backend.
+      setCostCentreRequests([]);
+      return;
+    }
+    await loadCostCentreRequests(activeCountry);
+  };
+
+  // Cambiar el país de la bandeja relee ESA ruta. La elección queda en el estado
+  // para que aprobar/rechazar resuelvan en el mismo país que se listó.
+  const handleRequestsCountryChange = async (countryId: string) => {
+    setActiveCountry(countryId);
+    await loadCostCentreRequests(countryId);
+  };
+
   const handleApproveRequest = async (req: CostCentreRequestRow) => {
+    if (!activeCountry) {
+      toast.error("No se pudo determinar el país de la solicitud.");
+      return;
+    }
     try {
       await resolveCostCentreRequestCallable({
         requestId: req.requestId,
         companyId: req.companyId,
-        countryId: (req.countryId || "sv").toLowerCase(),
+        // El país elegido en la bandeja manda: la solicitud se resuelve en la
+        // ruta que se listó, no en un `sv` de respaldo.
+        countryId: activeCountry,
         decision: "approved",
       });
       toast.success("Solicitud aprobada y nuevo centro de costo habilitado.");
@@ -197,6 +296,10 @@ export default function EmpresasPage() {
 
   const handleRejectRequest = async () => {
     if (!selectedReqForReject) return;
+    if (!activeCountry) {
+      toast.error("No se pudo determinar el país de la solicitud.");
+      return;
+    }
     if (!rejectionReason.trim()) {
       toast.error("Por favor ingresa el motivo del rechazo.");
       return;
@@ -205,7 +308,8 @@ export default function EmpresasPage() {
       await resolveCostCentreRequestCallable({
         requestId: selectedReqForReject.requestId,
         companyId: selectedReqForReject.companyId,
-        countryId: (selectedReqForReject.countryId || "sv").toLowerCase(),
+        // Mismo país elegido en la bandeja: rechazar no puede resolver en otra ruta.
+        countryId: activeCountry,
         decision: "rejected",
         rejectionReason: rejectionReason.trim(),
       });
@@ -224,7 +328,8 @@ export default function EmpresasPage() {
   ) => {
     try {
       if (selectedCompany) {
-        await updateB2BCompany(selectedCompany.id, data);
+        // El país de la fila manda: el formulario arrastra un `countryId` heredado.
+        await updateB2BCompany(selectedCompany.id, data, selectedCompany.countryId);
         toast.success("Datos de la empresa actualizados correctamente.");
       } else {
         await createB2BCompany(data);
@@ -248,9 +353,15 @@ export default function EmpresasPage() {
   });
 
   // Un rechazo de lectura no es una colección vacía: sin este mensaje la tabla
-  // afirmaba "no hay empresas ... todavía" sobre una lectura denegada.
-  const emptyMessage = loadError
+  // afirmaba "no hay empresas ... todavía" sobre una lectura denegada. Una cuenta
+  // sin países declarados tampoco tiene cartera que mostrar, y un fallo parcial
+  // no permite afirmar que no hay empresas en el país que no respondió.
+  const emptyMessage = scopeNotice
+    ? scopeNotice
+    : loadError
     ? "No se pudo cargar el listado de empresas."
+    : coverageWarning
+    ? "No hay empresas en los países que sí respondieron."
     : search
     ? "No se encontraron empresas con ese criterio de búsqueda."
     : "No hay empresas B2B registradas todavía.";
@@ -315,7 +426,19 @@ export default function EmpresasPage() {
         </Alert>
       )}
 
-      {/* Métricas rápidas */}
+      {/* Cobertura parcial: faltan países, pero las filas leídas son válidas */}
+      {coverageWarning && (
+        <Alert severity="warning" sx={{ mb: 3 }}>
+          <Typography variant="subtitle2" fontWeight={700}>
+            Listado incompleto: no pudimos leer todos los países
+          </Typography>
+          <Typography variant="body2">{coverageWarning}</Typography>
+        </Alert>
+      )}
+
+      {/* Métricas rápidas. Sin países declarados no hay cartera que medir: un 0
+          afirmaría una cartera vacía que nadie leyó. */}
+      {!scopeNotice && (
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid size={{ xs: 12, sm: 4 }}>
           <Card elevation={0} sx={{ border: "1px solid", borderColor: "divider" }}>
@@ -358,6 +481,7 @@ export default function EmpresasPage() {
           </Card>
         </Grid>
       </Grid>
+      )}
 
       {/* Tabla con Búsqueda */}
       <DashboardCard title="Directorio Corporativo">
@@ -386,7 +510,7 @@ export default function EmpresasPage() {
             <Typography variant="h6" color="text.secondary" sx={{ mt: 1 }}>
               {emptyMessage}
             </Typography>
-            {!search && !loadError && (
+            {!search && !loadError && !scopeNotice && (
               <Button
                 variant="outlined"
                 sx={{ mt: 2 }}
@@ -420,6 +544,7 @@ export default function EmpresasPage() {
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {c.legalName}
+                        {c.countryId ? ` · ${c.countryId.toUpperCase()}` : ""}
                       </Typography>
                     </TableCell>
                     <TableCell>
@@ -526,6 +651,7 @@ export default function EmpresasPage() {
         onClose={() => setOpenModal(false)}
         onSubmit={handleSubmit}
         initialData={selectedCompany}
+        countryId={activeCountry}
       />
 
       {/* G21: Modal Capacidades de Reserva (CF-74) */}
@@ -644,6 +770,23 @@ export default function EmpresasPage() {
           </Stack>
         </DialogTitle>
         <DialogContent dividers>
+          {operatorCountries.length > 1 && (
+            <TextField
+              select
+              size="small"
+              label="País de las solicitudes"
+              value={activeCountry}
+              onChange={(e) => handleRequestsCountryChange(e.target.value)}
+              sx={{ mb: 2, minWidth: 220 }}
+              helperText="Las solicitudes se leen y se resuelven en este país"
+            >
+              {operatorCountries.map((countryCode) => (
+                <MenuItem key={countryCode} value={countryCode}>
+                  {countryCode.toUpperCase()}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
           {loadingRequests ? (
             <LinearProgress sx={{ my: 3 }} />
           ) : costCentreRequests.length === 0 ? (
