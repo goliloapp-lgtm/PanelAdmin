@@ -59,10 +59,14 @@ import {
   CAPACITY_EXCEEDED_MESSAGE_ES,
   calculateMultiStopRouteDistanceKm,
   calculateB2BTariff,
-  getAllowedCategoriesForPassengers,
 } from "@/utils/b2bPricing";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { getFareQuoteCallable, FareQuote } from "@/utils/functions";
+import {
+  getFareQuoteCallable,
+  listScheduledTripCategoriesCallable,
+  AssignableCategoryRow,
+  FareQuote,
+} from "@/utils/functions";
 import GoogleAddressAutocomplete from "../../_components/GoogleAddressAutocomplete";
 import GoogleRouteMap from "../../_components/GoogleRouteMap";
 import toast from "react-hot-toast";
@@ -99,8 +103,23 @@ const NuevaSolicitudB2BPage = () => {
   const [passengerNamesInput, setPassengerNamesInput] = useState(
     "Ing. Carlos Rivas, Lic. Sofía Méndez"
   );
-  const [vehicleCategory, setVehicleCategory] =
-    useState<VehicleCategory>("suv");
+  const [vehicleCategory, setVehicleCategory] = useState<string>("");
+
+  // S4: las categorías asignables las decide el backend para esta cantidad exacta
+  // (capacidad, tarifa del país y parque activo). El rebote evita una llamada por
+  // tecla; el error no se traga, porque una lista vacía dejaría al operador
+  // adivinando por qué no puede reservar.
+  const [assignableCategories, setAssignableCategories] = useState<
+    AssignableCategoryRow[]
+  >([]);
+  const [assignedCategoryId, setAssignedCategoryId] = useState("");
+  const [categoriesLoadedForCount, setCategoriesLoadedForCount] = useState<
+    number | null
+  >(null);
+  const [categoriesError, setCategoriesError] = useState<{
+    passengerCount: number;
+    message: string;
+  } | null>(null);
 
   const [hasCargo, setHasCargo] = useState(false);
   const [cargoDescription, setCargoDescription] = useState("");
@@ -199,17 +218,68 @@ const NuevaSolicitudB2BPage = () => {
     });
   }, [companyId]);
 
-  // Regla de Negocio: > 4 pasajeros fuerza automáticamente Microbús
-  const allowedCategories = useMemo(
-    () => getAllowedCategoriesForPassengers(passengersCount),
-    [passengersCount]
-  );
-
   useEffect(() => {
-    if (!allowedCategories.includes(vehicleCategory)) {
-      setVehicleCategory("microbus");
-    }
-  }, [allowedCategories, vehicleCategory]);
+    let active = true;
+    // La lista anterior no describe esta reserva: mientras llega la de esta
+    // cantidad no hay elección válida.
+    setAssignableCategories([]);
+    setAssignedCategoryId("");
+    setCategoriesLoadedForCount(null);
+    const timer = setTimeout(() => {
+      listScheduledTripCategoriesCallable({ passengerCount: passengersCount })
+        .then((res) => {
+          if (!active) return;
+          setAssignableCategories(res.data?.categories ?? []);
+          setAssignedCategoryId(res.data?.assignedCategoryId || "");
+          setCategoriesLoadedForCount(passengersCount);
+        })
+        .catch((err) => {
+          if (!active) return;
+          setCategoriesError({
+            passengerCount: passengersCount,
+            message: formatFriendlyError(
+              err,
+              "No pudimos cargar las categorías disponibles para esta cantidad de pasajeros. Por favor intenta nuevamente o contáctanos por WhatsApp o teléfono."
+            ),
+          });
+        });
+    }, 300);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [passengersCount]);
+
+  // La lista solo vale para la cantidad con la que se cargó: mientras la pedida y
+  // la cargada difieran (rebote en curso o carga fallida), la elección de la lista
+  // anterior no se puede mandar.
+  const categoriesReadyForCurrentCount =
+    categoriesLoadedForCount === passengersCount;
+
+  // El error también es de una cantidad concreta: al cambiarla queda viejo.
+  const categoriesErrorMessage =
+    categoriesError !== null && categoriesError.passengerCount === passengersCount
+      ? categoriesError.message
+      : null;
+
+  // La elección efectiva: la del operador mientras siga siendo asignable. Si el
+  // backend ya no la ofrece para esta cantidad —o es la primera carga— se
+  // preselecciona la que el alta elegiría hoy (`assignedCategoryId`), que es la más
+  // ajustada del conjunto. Sin lista válida para esta cantidad no hay elección.
+  const effectiveCategoryId = useMemo(() => {
+    if (!categoriesReadyForCurrentCount) return "";
+    const keepsChoice = assignableCategories.some(
+      (row) => row.categoryId === vehicleCategory
+    );
+    if (keepsChoice) return vehicleCategory;
+    return assignedCategoryId || assignableCategories[0]?.categoryId || "";
+  }, [
+    categoriesReadyForCurrentCount,
+    assignableCategories,
+    vehicleCategory,
+    assignedCategoryId,
+  ]);
 
   // Calcular distancia automática entre Origen -> Paradas -> Destino
   const autoOneWayDistanceKm = useMemo(() => {
@@ -233,13 +303,18 @@ const NuevaSolicitudB2BPage = () => {
 
   const tariffBreakdown = useMemo(
     () =>
-      calculateB2BTariff(vehicleCategory, effectiveOneWayKm, roundTrip),
-    [vehicleCategory, effectiveOneWayKm, roundTrip]
+      calculateB2BTariff(
+        effectiveCategoryId as VehicleCategory,
+        effectiveOneWayKm,
+        roundTrip
+      ),
+    [effectiveCategoryId, effectiveOneWayKm, roundTrip]
   );
 
   // CF-38: Fetch official backend quote whenever legs or category change
   useEffect(() => {
     if (effectiveOneWayKm <= 0) return;
+    if (!effectiveCategoryId) return;
     const oneWayDuration = Math.max(5, Math.round(tariffBreakdown.estimatedDurationMinutes / (roundTrip ? 2 : 1)));
     const legs = roundTrip
       ? [
@@ -248,13 +323,7 @@ const NuevaSolicitudB2BPage = () => {
         ]
       : [{ distance: effectiveOneWayKm, durationMinutes: oneWayDuration }];
 
-    // Map vehicleCategory to backend categoryId
-    const categoryMap: Record<string, string> = {
-      suv: "suv",
-      pickup: "pickup-doble-cabina",
-      microbus: "microbus",
-    };
-    const categoryId = categoryMap[vehicleCategory] ?? vehicleCategory;
+    const categoryId = effectiveCategoryId;
 
     let cancelled = false;
     setQuoteLoading(true);
@@ -279,7 +348,7 @@ const NuevaSolicitudB2BPage = () => {
       });
 
     return () => { cancelled = true; };
-  }, [effectiveOneWayKm, vehicleCategory, roundTrip, tariffBreakdown.estimatedDurationMinutes, companyId]);
+  }, [effectiveOneWayKm, effectiveCategoryId, roundTrip, tariffBreakdown.estimatedDurationMinutes, companyId]);
 
   const selectedCompany = companies.find((c) => c.id === companyId);
   const selectedCostCenter = costCenters.find(
@@ -320,6 +389,17 @@ const NuevaSolicitudB2BPage = () => {
     }
 
     e.preventDefault();
+    // La categoría solo vale para la cantidad con la que se cargó: si la lista
+    // todavía no corresponde a esta cantidad, la solicitud no puede llevarse la
+    // elección de otra (S4).
+    if (!categoriesReadyForCurrentCount || !effectiveCategoryId) {
+      setError(
+        isEn
+          ? "The vehicle categories for this passenger count are still loading. Wait a moment and try again: the request cannot be sent with a category chosen for another passenger count."
+          : "Las categorías de vehículo para esta cantidad de pasajeros todavía se están cargando. Espera un momento e intenta de nuevo: la solicitud no se puede enviar con una categoría elegida para otra cantidad de pasajeros."
+      );
+      return;
+    }
     if (passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY) {
       setError(
         isEn
@@ -480,7 +560,7 @@ const NuevaSolicitudB2BPage = () => {
         passengersCount,
         passengerNames,
         passengerPhone: passengerPhone.trim(),
-        vehicleCategory,
+        vehicleCategory: effectiveCategoryId as VehicleCategory,
         hasCargo,
         cargoDescription: hasCargo ? cargoDescription.trim() : "",
         origin: originPoint,
@@ -495,7 +575,7 @@ const NuevaSolicitudB2BPage = () => {
         estimatedDistanceKm: backendQuote.chargedDistance,
         estimatedDurationMinutes: tariffBreakdown.estimatedDurationMinutes,
         tariffApplied: {
-          category: vehicleCategory,
+          category: effectiveCategoryId as VehicleCategory,
           ratePerKm: backendQuote.appliedFareRate,
           minFare: tariffBreakdown.minFare,
           baseDistanceKm: tariffBreakdown.baseDistanceKm,
@@ -976,8 +1056,8 @@ const NuevaSolicitudB2BPage = () => {
                 }
                 subtitle={
                   isEn
-                    ? "More than 4 passengers automatically assigns Corporate Minibus (up to 12 passengers). Requests exceeding 12 passengers require contacting Lilo."
-                    : "Más de 4 pasajeros asigna automáticamente Microbús Corporativo (hasta 12 pasajeros). Para más de 12 pasajeros contáctenos directamente por WhatsApp o llamada."
+                    ? "The list offers the categories the platform can actually assign for that passenger count, from the tightest fit to the roomiest. Requests exceeding 12 passengers require contacting Lilo."
+                    : "La lista ofrece las categorías que la plataforma puede asignar para esa cantidad de pasajeros, de la más ajustada a la más amplia. Para más de 12 pasajeros contáctenos directamente por WhatsApp o llamada."
                 }
               >
                 <Grid container spacing={2.5}>
@@ -1004,32 +1084,48 @@ const NuevaSolicitudB2BPage = () => {
                     <TextField
                       select
                       fullWidth
-                      disabled={passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY}
+                      disabled={
+                        passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY ||
+                        !categoriesReadyForCurrentCount
+                      }
                       label={
                         isEn
                           ? "Required Vehicle Category *"
                           : "Categoría de Vehículo Requerida *"
                       }
-                      value={vehicleCategory}
-                      onChange={(e) =>
-                        setVehicleCategory(e.target.value as VehicleCategory)
-                      }
+                      value={effectiveCategoryId}
+                      onChange={(e) => setVehicleCategory(e.target.value)}
+                      error={Boolean(categoriesErrorMessage)}
+                      helperText={categoriesErrorMessage || undefined}
                     >
-                      <MenuItem
-                        value="suv"
-                        disabled={!allowedCategories.includes("suv")}
-                      >
-                        SUV Corporativa (Máx. 4 pasajeros)
-                      </MenuItem>
-                      <MenuItem
-                        value="pickup"
-                        disabled={!allowedCategories.includes("pickup")}
-                      >
-                        Pick-up Doble Cabina (Máx. 4 pasajeros)
-                      </MenuItem>
-                      <MenuItem value="microbus">
-                        Microbús Corporativo (Máx. 12 pasajeros)
-                      </MenuItem>
+                      {categoriesReadyForCurrentCount &&
+                      assignableCategories.length > 0 ? (
+                        assignableCategories.map((category) => (
+                          <MenuItem
+                            key={category.categoryId}
+                            value={category.categoryId}
+                          >
+                            {category.name}
+                            {typeof category.maximumPassengers === "number"
+                              ? ` (hasta ${category.maximumPassengers} pax)`
+                              : ""}
+                          </MenuItem>
+                        ))
+                      ) : (
+                        <MenuItem value="" disabled>
+                          {categoriesErrorMessage
+                            ? isEn
+                              ? "No categories available"
+                              : "Sin categorías disponibles"
+                            : categoriesReadyForCurrentCount
+                            ? isEn
+                              ? "No assignable categories for this passenger count"
+                              : "Sin categorías asignables para esta cantidad de pasajeros"
+                            : isEn
+                            ? "Loading categories…"
+                            : "Cargando categorías…"}
+                        </MenuItem>
+                      )}
                     </TextField>
                   </Grid>
 
@@ -1319,6 +1415,8 @@ const NuevaSolicitudB2BPage = () => {
                     disabled={
                       submitting ||
                       !backendQuote ||
+                      !categoriesReadyForCurrentCount ||
+                      !effectiveCategoryId ||
                       passengersCount > MAX_VEHICLE_PASSENGER_CAPACITY
                     }
                     startIcon={<IconCheck size={20} />}

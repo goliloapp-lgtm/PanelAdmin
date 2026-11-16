@@ -809,6 +809,37 @@ export const createScheduledTripCallable = httpsCallable<
   }
 >(functions, "createScheduledTrip");
 
+// S4: las categorías que la reserva puede asignar de verdad —capacidad y parque
+// activo del país, resueltos por el backend—, no una tabla fija en la pantalla.
+export interface AssignableCategoryRow {
+  categoryId: string;
+  name: string;
+  /**
+   * Techo de la categoría según los vehículos ACTIVOS de la flota del país, con el
+   * catálogo como respaldo. NO depende de la cantidad de pasajeros pedida.
+   * `null` = techo desconocido.
+   */
+  maximumPassengers: number | null;
+  sortOrder: number;
+}
+
+export interface ListScheduledTripCategoriesResponse {
+  countryId: string;
+  passengerCount: number;
+  /** De la más ajustada a la más amplia. */
+  categories: AssignableCategoryRow[];
+  /** La que el alta asigna cuando no se manda `categoryId`. */
+  assignedCategoryId: string;
+}
+
+export const listScheduledTripCategoriesCallable = (data: {
+  passengerCount: number;
+}) =>
+  httpsCallable<{ passengerCount: number }, ListScheduledTripCategoriesResponse>(
+    functions,
+    "listScheduledTripCategories"
+  )(data);
+
 // CF-86: Operaciones de plataforma sobre reservas B2B (SuperAdmin / Admin)
 export const createScheduledTripForCompanyCallable = httpsCallable<
   {
@@ -817,6 +848,9 @@ export const createScheduledTripForCompanyCallable = httpsCallable<
     travellerId: string;
     costCentreId?: string;
     passengerCount: number;
+    /** S4: la categoría elegida por el operador; el servidor la valida contra las
+     * asignables para esa cantidad y, si falta, deriva la más ajustada. */
+    categoryId?: string;
     scheduledPickupAt: string;
     originAddress?: string;
     originLatitude?: number;

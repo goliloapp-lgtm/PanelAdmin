@@ -236,6 +236,15 @@ export const createB2BServiceRequest = async (
     const sanitizedDuration = Math.max(1, Math.round(Number(estDuration) || 15));
     const passengerCount = Math.max(1, Math.round(Number(data.passengersCount) || 1));
 
+    // S4: la categoría la eligió el operador en la lista que publica el backend
+    // (`listScheduledTripCategories`). Se manda tal cual: el servidor la valida
+    // contra ese mismo conjunto sin escribir nada si no pertenece. Sin ella, el
+    // alta deriva la más ajustada, como antes. Nada se valida aquí.
+    const requestedCategoryId =
+      typeof data.vehicleCategory === "string" && data.vehicleCategory.trim() !== ""
+        ? data.vehicleCategory.trim()
+        : undefined;
+
     // CF-86: Invocar el callable oficial de plataforma para reservas en nombre de la empresa
     try {
       const schedRes = await createScheduledTripForCompanyCallable({
@@ -244,6 +253,7 @@ export const createB2BServiceRequest = async (
         costCentreId: cleanCostCentreId,
         scheduledPickupAt: scheduledPickupAtIso,
         passengerCount,
+        categoryId: requestedCategoryId,
         originAddress: data.origin.address,
         originLatitude: data.origin.lat,
         originLongitude: data.origin.lng,
