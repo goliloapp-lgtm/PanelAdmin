@@ -81,6 +81,7 @@ import {
   B2BRequestStatus,
   B2BServiceRequest,
   B2BVehicle,
+  VehicleCategory,
 } from "@/types/b2b";
 import {
   subscribeToB2BCompanies,
@@ -108,6 +109,19 @@ import {
 const formatPickupInstant = (value: string): string => {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+};
+
+/**
+ * S4 — `listPlatformScheduledTrips` no publica la cantidad de pasajeros de la reserva.
+ * La fila marca ese hueco con `NaN` —«no hay número»— en lugar de deducirlo del
+ * rótulo de la categoría. `Number.isFinite` separa un conteo real de la ausencia.
+ */
+const UNKNOWN_PASSENGERS = Number.NaN;
+
+/** El conteo del documento tal cual, o el hueco: nunca uno inventado. */
+const readPassengerCount = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : UNKNOWN_PASSENGERS;
 };
 
 /**
@@ -366,10 +380,13 @@ const B2BSolicitudesPage = () => {
         requestedByName: (st as any).requestedByName || "Coordinador Corporativo",
         travellerId: st.travellerId || "",
         travellerName: (st as any).travellerName || (st.travellerId ? "Viajero Corporativo" : ""),
-        passengersCount: (st as any).passengerCount || (st.categoryId === "microbus" ? 8 : 1),
+        passengersCount: readPassengerCount((st as any).passengerCount),
         passengerNames: (st as any).passengerName ? [(st as any).passengerName] : [],
         passengerPhone: (st as any).passengerPhone || "",
-        vehicleCategory: (st.categoryId === "pickup" ? "pickup" : st.categoryId === "microbus" ? "microbus" : "suv") as any,
+        // S4: la categoría es el id del catálogo tal como lo guardó el alta (`van`,
+        // `bus-coaster`, `pickup-doble-cabina`). Lo que se va es el colapso a `suv`,
+        // que convertía cualquier id desconocido en una categoría que nadie pidió.
+        vehicleCategory: st.categoryId as VehicleCategory,
         hasCargo: Boolean((st as any).hasCargo),
         origin: {
           address: st.originAddress,
@@ -397,7 +414,7 @@ const B2BSolicitudesPage = () => {
         estimatedDistanceKm: (st as any).chargedDistance,
         estimatedDurationMinutes: (st as any).durationMinutes,
         tariffApplied: {
-          category: (st.categoryId as any) || "suv",
+          category: st.categoryId as VehicleCategory,
           ratePerKm: (st as any).appliedFareRate,
           minFare: (st as any).minimumApplied === true ? (st as any).farePrice : undefined,
           baseDistanceKm: (st as any).billableDistance,
@@ -486,6 +503,22 @@ const B2BSolicitudesPage = () => {
           assignedVehiclePlate: isSeeking
             ? undefined
             : sReq.assignedVehiclePlate ?? list[existingIdx].assignedVehiclePlate,
+          // S4: la fila de plataforma no publica ni el conteo ni la tarifa por km; lo
+          // que no sabe no pisa lo que la reserva guardada sí trae.
+          passengersCount: Number.isFinite(sReq.passengersCount)
+            ? sReq.passengersCount
+            : list[existingIdx].passengersCount,
+          tariffApplied: {
+            ...sReq.tariffApplied,
+            ratePerKm:
+              typeof sReq.tariffApplied?.ratePerKm === "number"
+                ? sReq.tariffApplied.ratePerKm
+                : list[existingIdx].tariffApplied?.ratePerKm,
+            minFare:
+              typeof sReq.tariffApplied?.minFare === "number"
+                ? sReq.tariffApplied.minFare
+                : list[existingIdx].tariffApplied?.minFare,
+          },
         };
       } else {
         list.push({
@@ -578,24 +611,24 @@ const B2BSolicitudesPage = () => {
     }
     lastFetchedKeyRef.current = fetchKey;
 
-    const catId =
-      activeCategoryId === "pickup"
-        ? "pickup"
-        : activeCategoryId === "microbus"
-          ? "microbus"
-          : "suv";
-
-    listEligibleDriversCallable({
-      categoryId: catId,
-      countryId: "sv",
-      ...(activeSchedId && !activeIsImmediate
-        ? { scheduledTripId: activeSchedId }
-        : activeTripId
-          ? { tripId: activeTripId }
-          : {}),
-    })
-      .then((res) => setEligibleDrivers(res.data?.drivers || []))
-      .catch(() => setEligibleDrivers([]));
+    // S4: la elegibilidad se consulta con la categoría REAL de la reserva. Antes, un
+    // id fuera de la tabla vieja se consultaba como `suv` y la lista traía las
+    // unidades de otra categoría. Sin categoría no se sustituye ninguna.
+    if (activeCategoryId) {
+      listEligibleDriversCallable({
+        categoryId: activeCategoryId,
+        countryId: "sv",
+        ...(activeSchedId && !activeIsImmediate
+          ? { scheduledTripId: activeSchedId }
+          : activeTripId
+            ? { tripId: activeTripId }
+            : {}),
+      })
+        .then((res) => setEligibleDrivers(res.data?.drivers || []))
+        .catch(() => setEligibleDrivers([]));
+    } else {
+      setEligibleDrivers([]);
+    }
 
     const subjectId = activeTripId || activeSchedId || selectedRequestId;
     if (subjectId) {
@@ -747,11 +780,18 @@ const B2BSolicitudesPage = () => {
         return v.category === "microbus";
       }
 
-      // 1 a 4 pasajeros: compatible con la categoría solicitada o microbús
-      if (activeRequest.vehicleCategory) {
+      // 1 a 4 pasajeros: la unidad sirve cuando su categoría REAL —el `categoryId`
+      // del catálogo, que el parque también guarda— es la pedida. Comparar solo el
+      // rótulo colapsado dejaba a una reserva `van` sin unidades y ofrecía un `van`
+      // para una reserva `suv`. Los tres rótulos históricos siguen valiendo porque
+      // son ids legítimos, y el microbús sigue sirviendo a cualquier categoría chica
+      // (Invariante Lilo SV).
+      const requestedCategoryId = activeRequest.vehicleCategory;
+      if (requestedCategoryId) {
         return (
-          v.category === activeRequest.vehicleCategory ||
-          (activeRequest.vehicleCategory === "suv" && v.category === "microbus")
+          v.categoryId === requestedCategoryId ||
+          v.category === requestedCategoryId ||
+          (requestedCategoryId === "suv" && v.category === "microbus")
         );
       }
       return true;
@@ -1580,8 +1620,12 @@ const B2BSolicitudesPage = () => {
                                 : "primary"
                             }
                             label={`${(
-                              req.vehicleCategory || "suv"
-                            ).toUpperCase()} · ${req.passengersCount} pax`}
+                              req.vehicleCategory || "s/d"
+                            ).toUpperCase()} · ${
+                              Number.isFinite(req.passengersCount)
+                                ? `${req.passengersCount} pax`
+                                : "pax s/d"
+                            }`}
                             sx={{ fontWeight: 600 }}
                           />
                           {req.hasCargo && (
@@ -2215,7 +2259,11 @@ const B2BSolicitudesPage = () => {
               <Stack direction="row" spacing={2}>
                 <Box flex={1}>
                   <Typography variant="caption" color="textSecondary">
-                    PASAJEROS ({activeRequest.passengersCount})
+                    PASAJEROS ({
+                      Number.isFinite(activeRequest.passengersCount)
+                        ? activeRequest.passengersCount
+                        : "s/d"
+                    })
                   </Typography>
                   <Typography variant="body2" fontWeight={600}>
                     {(activeRequest.passengerNames || []).join(", ") ||
@@ -2244,16 +2292,18 @@ const B2BSolicitudesPage = () => {
                   ).toFixed(2)}{" "}
                   USD
                 </Typography>
+                {/* S4: la tarifa que se imprime es la que la reserva guarda. Cuando
+                    no la trae no se rellena con la de la tabla: se dice que falta. */}
                 <Typography variant="caption">
-                  Distancia facturable: {activeRequest.estimatedDistanceKm} km ·
-                  Tarifa/km: $
-                  {Number(activeRequest.tariffApplied?.ratePerKm || 0.67).toFixed(
-                    2
-                  )}{" "}
-                  · Mínimo: $
-                  {Number(activeRequest.tariffApplied?.minFare || 13.56).toFixed(
-                    2
-                  )}
+                  Distancia facturable: {activeRequest.estimatedDistanceKm} km ·{" "}
+                  Tarifa/km:{" "}
+                  {typeof activeRequest.tariffApplied?.ratePerKm === "number"
+                    ? `$${activeRequest.tariffApplied.ratePerKm.toFixed(2)}`
+                    : "pendiente de cotización"}{" "}
+                  · Mínimo:{" "}
+                  {typeof activeRequest.tariffApplied?.minFare === "number"
+                    ? `$${activeRequest.tariffApplied.minFare.toFixed(2)}`
+                    : "pendiente de cotización"}
                 </Typography>
               </Alert>
 

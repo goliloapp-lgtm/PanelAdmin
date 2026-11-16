@@ -59,6 +59,22 @@ const ACTIVE_STATUSES = [
   "arrived",
 ];
 
+/**
+ * S4 — `listPlatformScheduledTrips` no publica la cantidad de pasajeros de la reserva.
+ * La fila marca ese hueco con `NaN` —«no hay número»— en lugar de deducirlo del
+ * rótulo de la categoría. `Number.isFinite` separa un conteo real de la ausencia.
+ */
+const UNKNOWN_PASSENGERS = Number.NaN;
+
+/** Colores de las barras del gráfico de categorías, en orden de demanda. */
+const CATEGORY_CHART_COLORS = [
+  "primary",
+  "secondary",
+  "warning",
+  "success",
+  "info",
+] as const;
+
 const B2BDashboardPage = () => {
   const router = useRouter();
   const [requests, setRequests] = useState<B2BServiceRequest[]>([]);
@@ -91,12 +107,6 @@ const B2BDashboardPage = () => {
       const additional: B2BServiceRequest[] = [];
       if (schedRes.status === "fulfilled" && schedRes.value.data?.scheduledTrips) {
         for (const st of schedRes.value.data.scheduledTrips) {
-          const rawCat = String(st.categoryId || "suv").toLowerCase();
-          const category: B2BVehicle["category"] = rawCat.includes("pickup")
-            ? "pickup"
-            : rawCat.includes("microbus")
-            ? "microbus"
-            : "suv";
           additional.push({
             id: st.scheduledTripId,
             folio: `RES-${st.scheduledTripId.slice(0, 8).toUpperCase()}`,
@@ -109,8 +119,10 @@ const B2BDashboardPage = () => {
               : st.status === "cancelled"
               ? "cancelled"
               : "assigned") as any,
-            vehicleCategory: category,
-            passengersCount: category === "microbus" ? 8 : 2,
+            // S4: la categoría es el id del catálogo tal como lo guardó el alta.
+            // Colapsar un id desconocido a `suv` inventaba la categoría pedida.
+            vehicleCategory: st.categoryId as B2BVehicle["category"],
+            passengersCount: UNKNOWN_PASSENGERS,
             origin: {
               address: st.originAddress || "San Salvador",
               lat: 13.6929,
@@ -196,13 +208,17 @@ const B2BDashboardPage = () => {
       0
     );
 
-    const byCategory = {
-      suv: filteredRequests.filter((r) => r.vehicleCategory === "suv").length,
-      pickup: filteredRequests.filter((r) => r.vehicleCategory === "pickup")
-        .length,
-      microbus: filteredRequests.filter((r) => r.vehicleCategory === "microbus")
-        .length,
-    };
+    // S4: la demanda se cuenta por el id REAL de la categoría. Antes eran tres
+    // cubetas fijas: una reserva `van` no aparecía en ninguna y un id desconocido se
+    // contaba como `suv`.
+    const byCategory: Record<string, number> = {};
+    for (const r of filteredRequests) {
+      const categoryId =
+        typeof r.vehicleCategory === "string" && r.vehicleCategory.trim() !== ""
+          ? r.vehicleCategory.trim()
+          : "s/d";
+      byCategory[categoryId] = (byCategory[categoryId] || 0) + 1;
+    }
 
     // Agrupación por Centro de Costo
     const costCenterMap = new Map<
@@ -443,63 +459,42 @@ const B2BDashboardPage = () => {
           <Grid size={{ xs: 12, md: 6 }}>
             <DashboardCard
               title="Distribución por Categoría Vehicular"
-              subtitle="Demanda comparativa SUV vs Pick-up Doble Cabina vs Microbús"
+              subtitle="Demanda por categoría del catálogo en el periodo seleccionado"
             >
               <Stack spacing={2.5} mt={1}>
-                <Box>
-                  <Stack direction="row" justifyContent="space-between" mb={0.5}>
-                    <Typography variant="body2" fontWeight={600}>
-                      SUV Corporativa (máx. 4 pax)
-                    </Typography>
-                    <Typography variant="body2" fontWeight={700}>
-                      {metrics.byCategory.suv} servicios
-                    </Typography>
-                  </Stack>
-                  <LinearProgress
-                    variant="determinate"
-                    value={(metrics.byCategory.suv / totalRequestsCount) * 100}
-                    color="primary"
-                    sx={{ height: 10, borderRadius: 5 }}
-                  />
-                </Box>
-
-                <Box>
-                  <Stack direction="row" justifyContent="space-between" mb={0.5}>
-                    <Typography variant="body2" fontWeight={600}>
-                      Pick-up Doble Cabina (máx. 4 pax)
-                    </Typography>
-                    <Typography variant="body2" fontWeight={700}>
-                      {metrics.byCategory.pickup} servicios
-                    </Typography>
-                  </Stack>
-                  <LinearProgress
-                    variant="determinate"
-                    value={
-                      (metrics.byCategory.pickup / totalRequestsCount) * 100
-                    }
-                    color="secondary"
-                    sx={{ height: 10, borderRadius: 5 }}
-                  />
-                </Box>
-
-                <Box>
-                  <Stack direction="row" justifyContent="space-between" mb={0.5}>
-                    <Typography variant="body2" fontWeight={600}>
-                      Microbús Corporativo (máx. 12 pax)
-                    </Typography>
-                    <Typography variant="body2" fontWeight={700}>
-                      {metrics.byCategory.microbus} servicios
-                    </Typography>
-                  </Stack>
-                  <LinearProgress
-                    variant="determinate"
-                    value={
-                      (metrics.byCategory.microbus / totalRequestsCount) * 100
-                    }
-                    color="warning"
-                    sx={{ height: 10, borderRadius: 5 }}
-                  />
-                </Box>
+                {Object.entries(metrics.byCategory)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([categoryId, count], idx) => (
+                    <Box key={categoryId}>
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        mb={0.5}
+                      >
+                        <Typography variant="body2" fontWeight={600}>
+                          {categoryId.toUpperCase()}
+                        </Typography>
+                        <Typography variant="body2" fontWeight={700}>
+                          {count} servicios
+                        </Typography>
+                      </Stack>
+                      <LinearProgress
+                        variant="determinate"
+                        value={(count / totalRequestsCount) * 100}
+                        color={
+                          CATEGORY_CHART_COLORS[
+                            idx % CATEGORY_CHART_COLORS.length
+                          ]
+                        }
+                        sx={{ height: 10, borderRadius: 5 }}
+                      />
+                    </Box>
+                  ))}
+                {Object.keys(metrics.byCategory).length === 0 && (
+                  <Typography variant="body2" color="textSecondary">
+                    No hay servicios registrados en este periodo.
+                  </Typography>
+                )}
               </Stack>
             </DashboardCard>
           </Grid>
@@ -640,8 +635,12 @@ const B2BDashboardPage = () => {
                         <Chip
                           size="small"
                           label={`${(
-                            req.vehicleCategory || "suv"
-                          ).toUpperCase()} · ${req.passengersCount} pax`}
+                            req.vehicleCategory || "s/d"
+                          ).toUpperCase()} · ${
+                            Number.isFinite(req.passengersCount)
+                              ? `${req.passengersCount} pax`
+                              : "pax s/d"
+                          }`}
                           variant="outlined"
                         />
                       </TableCell>
