@@ -255,8 +255,8 @@ test("las escrituras usan el país de la fila", () => {
   );
   matches(
     page,
-    /countryId: \(capCompany\.countryId \|\| "sv"\)\.toLowerCase\(\)/,
-    "las capacidades se guardan en el país de la fila"
+    /const capabilityCountry = \(capCompany\.countryId \|\| ""\)\.trim\(\)\.toLowerCase\(\);[\s\S]{0,800}countryId: capabilityCountry,/,
+    "las capacidades se guardan en el país de la fila, sin completarlo con un default"
   );
 });
 
@@ -480,5 +480,97 @@ test("la bandeja de solicitudes usa un país del operador, no 'sv'", () => {
     /countryId: \((req|selectedReqForReject)\.countryId \|\| "sv"\)/.test(page),
     false,
     "resolver con el default 'sv' es justo el camino equivocado"
+  );
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Tercer tramo: el superAdmin sin `countryIds` no puede perder el directorio.
+ *
+ * `countries/{cc}/b2bCompanies` se lee con `isSuperAdmin()` SOLO, sin mirar
+ * `countryIds` (firestore.rules). Y `countryIds` puede quedar vacío de verdad:
+ * `functions/src/auth/createPlatformUser.ts` lo acuña como `[]`. Antes del
+ * tramo anterior esa identidad leía `countries/sv`; después, se quedaba con el
+ * cartel «tu cuenta no declara países» y sin una sola consulta. El dueño tiene
+ * que ver el catálogo completo; una cuenta común sin países sigue viendo el
+ * mensaje.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test("un superAdmin sin `countryIds` lee el catálogo y no se detiene", () => {
+  matches(
+    claims,
+    /tokenResult\.claims\.superAdmin === true/,
+    "el interruptor es el claim `superAdmin`, el mismo que lee el resto de la consola"
+  );
+  matches(
+    claims,
+    /getDocs\(collection\(db, "countries"\)\)/,
+    "sin `countryIds` el superAdmin tiene que sacar los países del catálogo `countries`"
+  );
+  assert.equal(
+    /if \(!Array\.isArray\(claimedCountries\)\) return \[\];/.test(claims),
+    false,
+    "volvió el corte temprano: un superAdmin sin `countryIds` no puede quedarse sin directorio"
+  );
+  const countryGuard = claims.indexOf("if (countries.length > 0) return countries;");
+  const superGuard = claims.indexOf("if (!superAdmin) return [];");
+  const catalogRead = claims.indexOf('collection(db, "countries")');
+  assert.ok(
+    countryGuard > 0 && superGuard > countryGuard,
+    "el claim `countryIds` manda; el guard de superAdmin viene después"
+  );
+  assert.ok(
+    catalogRead > superGuard,
+    "el catálogo se consulta sólo cuando la cuenta no declaró países Y es superAdmin"
+  );
+  matches(
+    detail,
+    /getOperatingCountriesFromClaims\(\)/,
+    "el detalle tiene que resolver con la misma regla: el mismo helper"
+  );
+});
+
+test("sin países y sin superAdmin la cuenta sigue viendo el mensaje, no una consulta", () => {
+  matches(
+    claims,
+    /if \(!superAdmin\) return \[\];/,
+    "sin el claim `superAdmin` una lista vacía no habilita el catálogo"
+  );
+  matches(page, /Tu cuenta no declara países donde operar/, "falta el mensaje en el listado");
+  matches(detail, /Tu cuenta no declara países donde operar/, "falta el mensaje en el detalle");
+
+  const scopeBranch = detail.indexOf("if (operatingCountries.length === 0) {");
+  const firstRead = detail.indexOf("getB2BCompanyById(");
+  assert.ok(
+    scopeBranch > 0 && firstRead > scopeBranch,
+    "el detalle no puede consultar antes de reconocer la cuenta sin países"
+  );
+});
+
+test("las pantallas de Empresas no completan el país con 'sv'", () => {
+  for (const [name, source] of [
+    ["el listado", page],
+    ["el detalle", detail],
+  ]) {
+    assert.equal(
+      /\|\|\s*["']sv["']/.test(source),
+      false,
+      `${name} no puede completar un país faltante con 'sv'`
+    );
+  }
+  // La fila siempre trae su país (el mapeo lo toma del path). Si faltara, la
+  // escritura de capacidades se avisa: no se inventa una ruta.
+  matches(
+    page,
+    /const capabilityCountry = \(capCompany\.countryId \|\| ""\)\.trim\(\)\.toLowerCase\(\);/,
+    "el país de la fila es la única fuente para las capacidades"
+  );
+  matches(
+    page,
+    /if \(!capabilityCountry\) \{[\s\S]{0,120}toast\.error\("No se pudo determinar el país de la empresa\."\)/,
+    "sin país la escritura de capacidades se avisa en vez de usar un default"
+  );
+  assert.ok(
+    page.includes("countryId: capabilityCountry,"),
+    "las capacidades se guardan en el país de la fila"
   );
 });

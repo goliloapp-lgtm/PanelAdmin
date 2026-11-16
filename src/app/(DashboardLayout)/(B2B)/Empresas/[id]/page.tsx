@@ -58,8 +58,9 @@ export default function EmpresaDetailPage() {
   const fetchCompany = async () => {
     try {
       setLoading(true);
-      // Los países salen del MISMO claim `countryIds` que usa el listado: son
-      // los que evalúa `isInCountry()` en firestore.rules.
+      // Los países salen del MISMO resolvedor que usa el listado: el claim
+      // `countryIds` (y el catálogo completo si la cuenta es superAdmin sin
+      // países). Son los que evalúa `isInCountry()` en firestore.rules.
       const operatingCountries = await getOperatingCountriesFromClaims();
 
       if (operatingCountries.length === 0) {

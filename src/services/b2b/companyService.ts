@@ -142,6 +142,12 @@ const mapCompanySnap = (
  * con `countryIds: ["ve"]` no tiene permiso en `countries/sv` y esa lectura se
  * denegaría. Una lista ausente o vacía significa "la cuenta no declara países
  * donde operar", no "opera en El Salvador".
+ *
+ * La única excepción es la cuenta `superAdmin`: la regla de
+ * `countries/{cc}/b2bCompanies` la admite por `isSuperAdmin()` sin mirar
+ * `countryIds`, y `countryIds` puede quedar vacío de verdad (`createPlatformUser`
+ * lo acuña como `[]`). Para esa identidad la lista sale del catálogo `countries`,
+ * así ve el directorio completo en vez de quedarse sin una sola consulta.
  */
 export const getOperatingCountriesFromClaims = async (): Promise<string[]> => {
   await auth.authStateReady();
@@ -149,17 +155,47 @@ export const getOperatingCountriesFromClaims = async (): Promise<string[]> => {
   if (!currentUser) return [];
 
   const tokenResult = await currentUser.getIdTokenResult();
+  // El claim que evalúa `isSuperAdmin()` en las reglas; el mismo nombre que lee
+  // `adminCheck` en el resto de la consola.
+  const superAdmin = tokenResult.claims.superAdmin === true;
   const claimedCountries = tokenResult.claims.countryIds;
-  if (!Array.isArray(claimedCountries)) return [];
+  const countries = Array.isArray(claimedCountries)
+    ? Array.from(
+        new Set(
+          claimedCountries
+            .filter((code): code is string => typeof code === "string")
+            .map((code) => code.trim().toLowerCase())
+            .filter((code) => code.length > 0)
+        )
+      )
+    : [];
 
-  return Array.from(
-    new Set(
-      claimedCountries
-        .filter((code): code is string => typeof code === "string")
-        .map((code) => code.trim().toLowerCase())
-        .filter((code) => code.length > 0)
-    )
-  );
+  if (countries.length > 0) return countries;
+
+  // Sin `countryIds` una cuenta común no tiene cartera que leer y la pantalla lo
+  // explica. El superAdmin sí: `isSuperAdmin()` es el término de la regla de
+  // `b2bCompanies` que no mira países, y el catálogo `countries` es legible por
+  // cualquier autenticado. Se suscribe a todos sus países.
+  if (!superAdmin) return [];
+
+  return await getAllCountryCodes();
+};
+
+/**
+ * Códigos de país del catálogo `countries`. El ID del documento ES el código ISO
+ * en minúsculas (`seedCountries.ts`), así que no se lee ningún campo ni hace
+ * falta un `where`: el bloque `match /countries/{countryId}` permite `read` a
+ * cualquier autenticado.
+ *
+ * Sin filtro de campo a propósito: `isOperable` distingue si el país cotiza —
+ * `ve` es `false` y aun así guarda la cartera real de pruebas, filtrarla
+ * escondería empresas — y `isActive` no separa carteras.
+ */
+const getAllCountryCodes = async (): Promise<string[]> => {
+  const snapshot = await getDocs(collection(db, "countries"));
+  return snapshot.docs
+    .map((docSnap) => docSnap.id.trim().toLowerCase())
+    .filter((code) => code.length > 0);
 };
 
 /** Fallo de lectura de UN país dentro de una suscripción multi-país. */

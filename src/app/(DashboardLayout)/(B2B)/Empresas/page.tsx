@@ -217,13 +217,21 @@ export default function EmpresasPage() {
 
   const handleSaveCapabilities = async () => {
     if (!capCompany) return;
+    // Sin país no se escribe: el default `sv` guardaba las capacidades de una
+    // empresa de otro país en `countries/sv`. La fila siempre trae su país (el
+    // mapeo lo toma del path); si faltara, se avisa en vez de inventar una ruta.
+    const capabilityCountry = (capCompany.countryId || "").trim().toLowerCase();
+    if (!capabilityCountry) {
+      toast.error("No se pudo determinar el país de la empresa.");
+      return;
+    }
     try {
       setSavingCap(true);
       await updateCompanyCapabilitiesCallable({
         companyId: capCompany.id,
         // El país va SIEMPRE: un administrador que opera más de un país no puede
         // dejar que el servidor adivine sobre qué empresa de qué país escribe.
-        countryId: (capCompany.countryId || "sv").toLowerCase(),
+        countryId: capabilityCountry,
         allowsImmediateTrips: capImmediate,
         allowsScheduledTrips: capScheduled,
         minimumBookingLeadMinutes: Number(capLeadMinutes) || 180,
