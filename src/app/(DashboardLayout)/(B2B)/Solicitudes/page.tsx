@@ -402,36 +402,49 @@ const B2BSolicitudesPage = () => {
         roundTrip: false,
         legs: [
           {
-            distance: Number((st as any).chargedDistance || 15),
+            distance: (st as any).chargedDistance ?? 0,
             durationMinutes: 25,
           },
         ],
         scheduledAt: st.scheduledPickupAt,
         createdAt: (st as any).createdAt || undefined,
         isImmediate: false,
-        // Lo que la fila no sabe, no lo inventa: la distancia y la tarifa salen del
-        // documento de la reserva, y la que falta queda sin definir.
+        // CF-99: la distancia, la tarifa y el piso son los hechos que la reserva
+        // guardó al cotizarse. Lo que falta queda sin definir; no se rellena.
         estimatedDistanceKm: (st as any).chargedDistance,
         estimatedDurationMinutes: (st as any).durationMinutes,
         tariffApplied: {
           category: st.categoryId as VehicleCategory,
           ratePerKm: (st as any).appliedFareRate,
-          minFare: (st as any).minimumApplied === true ? (st as any).farePrice : undefined,
           baseDistanceKm: (st as any).billableDistance,
           calculatedAmount: st.totalAmount,
+          // El «Mínimo» de la ficha era este piso impreso como importe. Ahora viaja
+          // como lo que es: distancia, con su unidad, y sólo si el documento lo trae.
+          minimumDistanceKm: (st as any).minimumDistance,
+          distanceUnit: (st as any).distanceUnit,
         },
-        fareBreakdown: {
-          countryId: "sv",
-          currency: "USD",
-          distanceUnit: "km",
-          chargedDistance: 15,
-          farePrice: st.totalAmount,
-          driverEarning: Number((st.totalAmount * 0.7).toFixed(2)),
-          commissionRate: 0.3,
-          commissionAmount: Number((st.totalAmount * 0.3).toFixed(2)),
-          minimumApplied: false,
-          pricingFormulaVersion: "h1-v1",
-        },
+        // CF-99: el desglose sale del `quote` congelado. Se arma sólo si la reserva
+        // trae los tres hechos que el tipo exige: un desglose con ceros sería otro
+        // número inventado.
+        ...(typeof (st as any).farePrice === "number" &&
+        typeof (st as any).chargedDistance === "number" &&
+        typeof (st as any).distanceUnit === "string"
+          ? {
+              fareBreakdown: {
+                countryId: "sv",
+                currency: st.currencyCode,
+                currencyCode: st.currencyCode,
+                distanceUnit: (st as any).distanceUnit,
+                chargedDistance: (st as any).chargedDistance,
+                farePrice: (st as any).farePrice,
+                appliedFareRate: (st as any).appliedFareRate,
+                commissionRate: (st as any).commissionRate,
+                commissionAmount: (st as any).commissionAmount,
+                driverEarning: (st as any).driverEarning,
+                minimumApplied: (st as any).minimumApplied,
+              },
+            }
+          : {}),
         finalAmount: st.totalAmount,
         assignedDriverId: driverId,
         assignedDriverName: driverName,
@@ -503,8 +516,9 @@ const B2BSolicitudesPage = () => {
           assignedVehiclePlate: isSeeking
             ? undefined
             : sReq.assignedVehiclePlate ?? list[existingIdx].assignedVehiclePlate,
-          // S4: la fila de plataforma no publica ni el conteo ni la tarifa por km; lo
-          // que no sabe no pisa lo que la reserva guardada sí trae.
+          // CF-99: la fila de plataforma publica ahora el conteo y la tarifa, así
+          // que lo que llega pisa lo guardado. Lo que no llega —un documento viejo—
+          // no pisa nada: la reserva guardada sigue diciendo lo suyo.
           passengersCount: Number.isFinite(sReq.passengersCount)
             ? sReq.passengersCount
             : list[existingIdx].passengersCount,
@@ -514,10 +528,10 @@ const B2BSolicitudesPage = () => {
               typeof sReq.tariffApplied?.ratePerKm === "number"
                 ? sReq.tariffApplied.ratePerKm
                 : list[existingIdx].tariffApplied?.ratePerKm,
-            minFare:
-              typeof sReq.tariffApplied?.minFare === "number"
-                ? sReq.tariffApplied.minFare
-                : list[existingIdx].tariffApplied?.minFare,
+            minimumDistanceKm:
+              typeof sReq.tariffApplied?.minimumDistanceKm === "number"
+                ? sReq.tariffApplied.minimumDistanceKm
+                : list[existingIdx].tariffApplied?.minimumDistanceKm,
           },
         };
       } else {
@@ -2302,18 +2316,27 @@ const B2BSolicitudesPage = () => {
                   ).toFixed(2)}{" "}
                   USD
                 </Typography>
-                {/* S4: la tarifa que se imprime es la que la reserva guarda. Cuando
-                    no la trae no se rellena con la de la tabla: se dice que falta. */}
+                {/* S4 / CF-99: la tarifa que se imprime es la que la reserva guarda.
+                    Cuando no la trae no se rellena con la de la tabla: se dice que
+                    falta. El «mínimo» del país es un piso de DISTANCIA. */}
                 <Typography variant="caption">
-                  Distancia facturable: {activeRequest.estimatedDistanceKm} km ·{" "}
-                  Tarifa/km:{" "}
+                  Distancia facturable:{" "}
+                  {typeof activeRequest.estimatedDistanceKm === "number"
+                    ? `${activeRequest.estimatedDistanceKm} ${
+                        activeRequest.tariffApplied?.distanceUnit ?? "km"
+                      }`
+                    : "sin dato"}{" "}
+                  · Tarifa/km:{" "}
                   {typeof activeRequest.tariffApplied?.ratePerKm === "number"
                     ? `$${activeRequest.tariffApplied.ratePerKm.toFixed(2)}`
                     : "pendiente de cotización"}{" "}
-                  · Mínimo:{" "}
-                  {typeof activeRequest.tariffApplied?.minFare === "number"
-                    ? `$${activeRequest.tariffApplied.minFare.toFixed(2)}`
-                    : "pendiente de cotización"}
+                  · Piso de distancia:{" "}
+                  {typeof activeRequest.tariffApplied?.minimumDistanceKm ===
+                  "number"
+                    ? `${activeRequest.tariffApplied.minimumDistanceKm} ${
+                        activeRequest.tariffApplied?.distanceUnit ?? "km"
+                      }`
+                    : "piso sin dato"}
                 </Typography>
               </Alert>
 

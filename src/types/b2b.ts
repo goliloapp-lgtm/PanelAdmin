@@ -333,7 +333,14 @@ export interface B2BServiceRequest {
   tariffApplied: {
     category: VehicleCategory;
     ratePerKm: number;
-    minFare: number;
+    /**
+     * El piso de DISTANCIA del país, no un importe mínimo: el backend no tiene
+     * tarifa mínima (CF-99). Se imprime con `distanceUnit`.
+     */
+    minimumDistanceKm?: number;
+    distanceUnit?: string;
+    /** Deprecado: era el `farePrice` de la reserva impreso como «Mínimo». */
+    minFare?: number;
     baseDistanceKm: number;
     calculatedAmount: number;
   };

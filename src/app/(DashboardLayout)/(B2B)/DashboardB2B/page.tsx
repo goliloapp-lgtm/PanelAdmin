@@ -60,9 +60,10 @@ const ACTIVE_STATUSES = [
 ];
 
 /**
- * S4 — `listPlatformScheduledTrips` no publica la cantidad de pasajeros de la reserva.
- * La fila marca ese hueco con `NaN` —«no hay número»— en lugar de deducirlo del
- * rótulo de la categoría. `Number.isFinite` separa un conteo real de la ausencia.
+ * CF-99 — el conteo de pasajeros lo publica la reserva desde el backend. Un documento
+ * que no lo trae deja el hueco marcado con `NaN` —«no hay número»— en lugar de
+ * deducirlo del rótulo de la categoría. `Number.isFinite` separa un conteo real de
+ * la ausencia.
  */
 const UNKNOWN_PASSENGERS = Number.NaN;
 
@@ -122,7 +123,7 @@ const B2BDashboardPage = () => {
             // S4: la categoría es el id del catálogo tal como lo guardó el alta.
             // Colapsar un id desconocido a `suv` inventaba la categoría pedida.
             vehicleCategory: st.categoryId as B2BVehicle["category"],
-            passengersCount: UNKNOWN_PASSENGERS,
+            passengersCount: st.passengerCount ?? UNKNOWN_PASSENGERS,
             origin: {
               address: st.originAddress || "San Salvador",
               lat: 13.6929,

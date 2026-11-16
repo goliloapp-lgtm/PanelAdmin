@@ -1229,6 +1229,19 @@ export interface PlatformScheduledTripRow {
   travellerId?: string;
   acceptedVehicleId?: string;
   companyId?: string;
+  // CF-99: los hechos de la reserva. Opcionales: el que el documento no trae no
+  // viaja, y la consola dice «sin dato» en vez de rellenarlo.
+  passengerCount?: number;
+  appliedFareRate?: number;
+  farePrice?: number;
+  chargedDistance?: number;
+  billableDistance?: number;
+  minimumDistance?: number;
+  minimumApplied?: boolean;
+  distanceUnit?: string;
+  commissionRate?: number;
+  commissionAmount?: number;
+  driverEarning?: number;
   lastDispatchBlock: {
     code: string;
     vehicleId: string;
