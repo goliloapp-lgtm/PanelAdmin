@@ -281,6 +281,15 @@ const NuevaSolicitudB2BPage = () => {
     assignedCategoryId,
   ]);
 
+  // La categoría del resumen es la elegida, con el nombre que publica el callable.
+  // `calculateB2BTariff` sólo conoce tres ids y devuelve la fila del SUV para
+  // cualquier otra, así que su rótulo no puede describir esta reserva (S4).
+  const selectedCategoryLabel =
+    assignableCategories.find((row) => row.categoryId === effectiveCategoryId)
+      ?.name ||
+    effectiveCategoryId ||
+    (isEn ? "not selected" : "sin seleccionar");
+
   // Calcular distancia automática entre Origen -> Paradas -> Destino
   const autoOneWayDistanceKm = useMemo(() => {
     if (!originCoord.lat || !destinationCoord.lat) return 0;
@@ -574,11 +583,16 @@ const NuevaSolicitudB2BPage = () => {
         isImmediate,
         estimatedDistanceKm: backendQuote.chargedDistance,
         estimatedDurationMinutes: tariffBreakdown.estimatedDurationMinutes,
+        // S4: lo que el alta declara como tarifa aplicada sale de la cotización, que
+        // es la que cobra. La tabla local sólo conoce `suv`, `pickup` y `microbus`:
+        // para cualquier otra categoría devolvía la fila del SUV.
         tariffApplied: {
           category: effectiveCategoryId as VehicleCategory,
           ratePerKm: backendQuote.appliedFareRate,
-          minFare: tariffBreakdown.minFare,
-          baseDistanceKm: tariffBreakdown.baseDistanceKm,
+          minFare: Number(
+            (backendQuote.minimumDistance * backendQuote.appliedFareRate).toFixed(2)
+          ),
+          baseDistanceKm: backendQuote.minimumDistance,
           calculatedAmount: backendQuote.totalAmount ?? backendQuote.farePrice,
         },
         finalAmount: backendQuote.totalAmount ?? backendQuote.farePrice,
@@ -1169,27 +1183,6 @@ const NuevaSolicitudB2BPage = () => {
                     </Grid>
                   )}
 
-                  {passengersCount > 4 &&
-                    passengersCount <= MAX_VEHICLE_PASSENGER_CAPACITY && (
-                      <Grid size={{ xs: 12 }}>
-                        <Alert severity="warning" sx={{ py: 0.5 }}>
-                          {isEn ? (
-                            <>
-                              For <strong>{passengersCount} passengers</strong>{" "}
-                              (more than 4), B2B policy automatically assigns{" "}
-                              <strong>Corporate Minibus (up to 12 passengers)</strong>.
-                            </>
-                          ) : (
-                            <>
-                              Para <strong>{passengersCount} pasajeros</strong>{" "}
-                              (más de 4), la normativa B2B El Salvador asigna automáticamente categoría{" "}
-                              <strong>Microbús Corporativo (hasta 12 pasajeros)</strong>.
-                            </>
-                          )}
-                        </Alert>
-                      </Grid>
-                    )}
-
                   <Grid size={{ xs: 12 }}>
                     <TextField
                       fullWidth
@@ -1269,7 +1262,7 @@ const NuevaSolicitudB2BPage = () => {
                     <Chip
                       size="small"
                       color="primary"
-                      label={tariffBreakdown.rule.shortLabel}
+                      label={selectedCategoryLabel}
                       sx={{ fontWeight: 700 }}
                     />
                   </Stack>
@@ -1333,7 +1326,7 @@ const NuevaSolicitudB2BPage = () => {
                     <Typography variant="body2" fontWeight={600}>
                       {backendQuote
                         ? `$${backendQuote.appliedFareRate.toFixed(2)} USD / km`
-                        : "—"}
+                        : "pendiente de cotización"}
                     </Typography>
                   </Stack>
 

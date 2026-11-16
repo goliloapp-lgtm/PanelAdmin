@@ -297,15 +297,3 @@ export function calculateB2BTariff(
   };
 }
 
-/**
- * Filtra las categorías permitidas según la cantidad de pasajeros
- * > 4 pasajeros obliga a usar Microbús
- */
-export function getAllowedCategoriesForPassengers(
-  passengersCount: number
-): VehicleCategory[] {
-  if (passengersCount > 4) {
-    return ["microbus"];
-  }
-  return ["suv", "pickup", "microbus"];
-}

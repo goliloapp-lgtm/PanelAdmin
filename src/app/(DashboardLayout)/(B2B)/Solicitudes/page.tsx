@@ -768,33 +768,43 @@ const B2BSolicitudesPage = () => {
 
   const compatibleVehicles = useMemo(() => {
     if (!activeRequest) return [];
-    const pax = activeRequest.passengersCount || 1;
-    if (pax > 12) return [];
+    // S4: la fila de plataforma no siempre publica el conteo. Antes un `|| 1`
+    // convertía «no sé» en 1 pasajero y metía la reserva en la rama de las
+    // categorías chicas. Sin conteo no hay techo que comparar: decide la categoría
+    // real de la reserva.
+    const requestedCount = Number.isFinite(activeRequest.passengersCount)
+      ? activeRequest.passengersCount
+      : null;
+    if (requestedCount !== null && requestedCount > 12) return [];
+
+    const requestedCategoryId = activeRequest.vehicleCategory;
+
+    // La unidad sirve cuando su categoría REAL —el `categoryId` del catálogo, que el
+    // parque también guarda— es la pedida. Comparar solo el rótulo colapsado dejaba a
+    // una reserva `van` sin unidades y ofrecía un `van` para una reserva `suv`. Los
+    // tres rótulos históricos siguen valiendo porque son ids legítimos, y el microbús
+    // sigue sirviendo a cualquier categoría chica (Invariante Lilo SV).
+    const matchesRequestedCategory = (v: B2BVehicle) =>
+      v.categoryId === requestedCategoryId ||
+      v.category === requestedCategoryId ||
+      (requestedCategoryId === "suv" && v.category === "microbus");
 
     return vehicles.filter((v) => {
       if (v.status !== "active") return false;
-      if (v.maxPassengers < pax) return false;
+
+      if (requestedCount === null) {
+        return requestedCategoryId ? matchesRequestedCategory(v) : true;
+      }
+
+      if (v.maxPassengers < requestedCount) return false;
 
       // 5 a 12 pasajeros: Exclusivamente Microbús (Invariante Lilo SV)
-      if (pax > 4) {
+      if (requestedCount > 4) {
         return v.category === "microbus";
       }
 
-      // 1 a 4 pasajeros: la unidad sirve cuando su categoría REAL —el `categoryId`
-      // del catálogo, que el parque también guarda— es la pedida. Comparar solo el
-      // rótulo colapsado dejaba a una reserva `van` sin unidades y ofrecía un `van`
-      // para una reserva `suv`. Los tres rótulos históricos siguen valiendo porque
-      // son ids legítimos, y el microbús sigue sirviendo a cualquier categoría chica
-      // (Invariante Lilo SV).
-      const requestedCategoryId = activeRequest.vehicleCategory;
-      if (requestedCategoryId) {
-        return (
-          v.categoryId === requestedCategoryId ||
-          v.category === requestedCategoryId ||
-          (requestedCategoryId === "suv" && v.category === "microbus")
-        );
-      }
-      return true;
+      // 1 a 4 pasajeros: la categoría real de la unidad decide.
+      return requestedCategoryId ? matchesRequestedCategory(v) : true;
     });
   }, [vehicles, activeRequest]);
 
