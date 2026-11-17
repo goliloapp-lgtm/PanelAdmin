@@ -372,26 +372,8 @@ export const provisionB2BCompanyAuthUser = async ({
       console.warn("[companyService] Error fetching roles collection:", err);
     }
 
-    // CF-39 / MIGRACION §6-ter: Invocación de createCompanyUser callable oficial
-    const createCompanyUserFn = httpsCallable<
-      {
-        email: string;
-        roleId: string;
-        companyId: string;
-        countryId: string;
-        firstName?: string;
-        lastName?: string;
-      },
-      {
-        uid: string;
-        provisionalPassword: string;
-        countryId: string;
-        companyId: string;
-        roleId: string;
-      }
-    >(functions, "createCompanyUser");
-
-    const res = await createCompanyUserFn({
+    // CF-39 / CF-101: Invocación de createCompanyUserCallable oficial (sin contraseña provisional en respuesta)
+    const res = await createCompanyUserCallable({
       email: normalizedEmail,
       roleId,
       companyId,
@@ -403,7 +385,7 @@ export const provisionB2BCompanyAuthUser = async ({
     return {
       uid: res.data.uid,
       email: normalizedEmail,
-      temporaryPassword: res.data.provisionalPassword || "",
+      temporaryPassword: "",
     };
   } catch (callableErr: any) {
     // CF-101 S7: un rechazo del callable se muestra, no se rodea. Acá vivía un

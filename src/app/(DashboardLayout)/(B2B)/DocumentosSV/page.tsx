@@ -379,9 +379,11 @@ const B2BDocumentosSVPage = () => {
                             <TableCell>
                               <Typography variant="body2" fontWeight={600}>
                                 {dossier.vehiclePlate
-                                  ? `${dossier.vehiclePlate} (${(
-                                      dossier.vehicleCategory || "suv"
-                                    ).toUpperCase()})`
+                                  ? `${dossier.vehiclePlate}${
+                                      dossier.vehicleCategory
+                                        ? ` (${dossier.vehicleCategory.toUpperCase()})`
+                                        : ""
+                                    }`
                                   : "Unidad por asignar"}
                               </Typography>
                               <Typography variant="caption" color="textSecondary">
