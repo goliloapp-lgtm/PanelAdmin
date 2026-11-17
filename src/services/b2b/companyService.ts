@@ -3,24 +3,13 @@ import {
   doc,
   getDocs,
   getDoc,
-  addDoc,
-  setDoc,
   updateDoc,
   deleteDoc,
-  query,
-  where,
   onSnapshot,
-  serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { initializeApp, getApps } from "firebase/app";
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signOut,
-} from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
-import { db, auth, functions, firebaseApp } from "@/utils/firebase";
+import { db, auth, functions } from "@/utils/firebase";
 import {
   createCompanyCallable,
   updateCompanyCallable,
@@ -340,14 +329,12 @@ export const generateTemporaryPassword = (): string => {
   return `LiloSV-${randomDigits}!`;
 };
 
-const getSecondaryAuth = () => {
-  const appName = "liloB2BProvisioner";
-  const existing = getApps().find((a) => a.name === appName);
-  const secondaryApp =
-    existing || initializeApp(firebaseApp.options, appName);
-  return getAuth(secondaryApp);
-};
-
+/**
+ * El alta de un usuario de empresa la ejecuta `createCompanyUser`; el documento
+ * `users/{uid}` también. Por eso `password`, `phone` y `tradeName` siguen en el
+ * contrato —no se le rompe la firma a quien llama— pero ya no se aplican acá: la
+ * credencial y el perfil los escribe el servidor (CF-101 / S7).
+ */
 export interface ProvisionB2BAuthParams {
   email: string;
   password: string;
@@ -359,11 +346,8 @@ export interface ProvisionB2BAuthParams {
 
 export const provisionB2BCompanyAuthUser = async ({
   email,
-  password,
   contactName,
-  phone,
   companyId,
-  tradeName,
 }: ProvisionB2BAuthParams): Promise<{
   uid?: string;
   email: string;
@@ -372,8 +356,6 @@ export const provisionB2BCompanyAuthUser = async ({
   const normalizedEmail = email.trim().toLowerCase();
   const [firstName, ...rest] = contactName.trim().split(" ");
   const lastName = rest.join(" ") || "";
-  let uid: string | undefined;
-  let finalPassword = password;
 
   try {
     // 1. Resolver el ID del documento en roles cuyo name sea "company_admin"
@@ -423,107 +405,21 @@ export const provisionB2BCompanyAuthUser = async ({
       email: normalizedEmail,
       temporaryPassword: res.data.provisionalPassword || "",
     };
-  } catch (authErr: any) {
-    console.warn("[companyService] createCompanyUser note, falling back to secondaryAuth:", authErr?.message || authErr);
-    // Fallback: Aprovisionamiento con secondaryAuth
-    const secondaryAuth = getSecondaryAuth();
-    try {
-      const userCred = await createUserWithEmailAndPassword(
-        secondaryAuth,
-        normalizedEmail,
-        password
-      );
-      uid = userCred.user.uid;
-      finalPassword = password;
-    } catch (secErr: any) {
-      if (secErr?.code === "auth/email-already-in-use") {
-        const usersSnap = await getDocs(
-          query(collection(db, "users"), where("email", "==", normalizedEmail))
-        );
-        if (!usersSnap.empty) {
-          uid = usersSnap.docs[0].id;
-        }
-      } else {
-        throw secErr;
-      }
-    } finally {
-      try {
-        await signOut(secondaryAuth);
-      } catch {
-        // Ignorar error al cerrar secondaryAuth
-      }
-    }
-  }
-
-  if (uid) {
-    await setDoc(
-      doc(db, "users", uid),
-      {
-        uid,
-        email: normalizedEmail,
-        firstName: firstName || "Admin",
-        lastName,
-        displayName: contactName.trim(),
-        phone: phone.trim(),
-        userType: "client",
-        countryId: "sv",
-        companyId,
-        companyRole: "company_admin",
-        isActive: true,
-        isEmailVerified: true,
-        mustChangePassword: true,
-        updatedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-      },
-      { merge: true }
+  } catch (callableErr: any) {
+    // CF-101 S7: un rechazo del callable se muestra, no se rodea. Acá vivía un
+    // fallback que creaba la cuenta con una app secundaria de Auth y escribía
+    // `users/{uid}` desde el navegador: esa segunda puerta dejaba sin efecto
+    // cualquier regla de autoría del backend. El error del callable viaja tal
+    // cual —con su `code`, su `message` y sus `details`— porque es lo que
+    // `formatFriendlyError` lee en la pantalla. La cuenta, la credencial y el
+    // documento los escribe el servidor.
+    console.warn(
+      "[companyService] createCompanyUser rechazó el alta:",
+      callableErr?.code,
+      callableErr?.message || callableErr
     );
-
-    try {
-      await setDoc(
-        doc(db, "users", uid, "countryMemberships", "sv"),
-        {
-          countryId: "sv",
-          status: "active",
-          role: "company_admin",
-          companyId,
-          joinedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (memErr) {
-      console.warn("[companyService] Membership record note:", memErr);
-    }
+    throw callableErr;
   }
-
-  try {
-    await addDoc(collection(db, "mail"), {
-      to: normalizedEmail,
-      message: {
-        subject: `Credenciales de Acceso — Portal Corporativo Lilo B2B (${
-          tradeName || "El Salvador"
-        })`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #E5EAEF; border-radius: 8px;">
-            <h2 style="color: #2A3547; margin-top: 0;">Bienvenido al Portal Corporativo Lilo B2B</h2>
-            <p style="color: #5A6A85;">Hola <strong>${contactName}</strong>,</p>
-            <p style="color: #5A6A85;">Tu cuenta corporativa para <strong>${
-              tradeName || normalizedEmail
-            }</strong> en El Salvador ha sido habilitada.</p>
-            <div style="background: #ECF2FF; padding: 16px; border-radius: 6px; margin: 16px 0;">
-              <p style="margin: 4px 0;"><strong>Correo de acceso:</strong> ${normalizedEmail}</p>
-              <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong> <code style="font-size: 15px; font-weight: bold;">${finalPassword}</code></p>
-            </div>
-            <p style="color: #5A6A85; font-size: 13px;">Por seguridad, al iniciar sesión por primera vez el sistema te solicitará configurar tu contraseña corporativa definitiva.</p>
-          </div>
-        `,
-      },
-    });
-  } catch (mailErr) {
-    console.warn("[companyService] Could not queue welcome email:", mailErr);
-  }
-
-  return { uid, email: normalizedEmail, temporaryPassword: finalPassword };
 };
 
 export const createB2BCompany = async (
