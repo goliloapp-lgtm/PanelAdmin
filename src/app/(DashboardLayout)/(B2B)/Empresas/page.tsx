@@ -65,6 +65,7 @@ import StatusBadge from "../_components/StatusBadge";
 import CompanyForm from "../_components/CompanyForm";
 import toast from "react-hot-toast";
 import { formatFriendlyError } from "@/utils/friendlyError";
+import { describeCompanyUserProvisionFailure } from "@/utils/companyUserProvisionError";
 import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function EmpresasPage() {
@@ -345,7 +346,17 @@ export default function EmpresasPage() {
       }
       setOpenModal(false);
     } catch (err: any) {
-      toast.error(formatFriendlyError(err, "No fue posible guardar los datos de la empresa."));
+      // CF-103: sólo el alta mapea el código del paso del alta del administrador
+      // (`INV-n`) y el rechazo de la guarda de conductor, cuyo mensaje lleva el
+      // correo completo. La edición de una empresa sigue con el traductor de
+      // siempre, y todo código no mapeado también.
+      const provisionFailure = selectedCompany
+        ? undefined
+        : describeCompanyUserProvisionFailure(err);
+      toast.error(
+        provisionFailure?.message ??
+          formatFriendlyError(err, "No fue posible guardar los datos de la empresa.")
+      );
       throw err;
     }
   };
