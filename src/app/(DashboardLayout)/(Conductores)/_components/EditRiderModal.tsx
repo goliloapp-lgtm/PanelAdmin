@@ -13,12 +13,16 @@ import {
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import { updateRider, deleteRider } from "@/utils/rider";
-import { updateDriver, deleteDriver } from "@/utils/driver";
-import { updateUser, deleteUser } from "@/utils/user";
+import { updateDriver } from "@/utils/driver";
+import { updateUser } from "@/utils/user";
 import { Rider } from "./ListRiders";
 import toast from "react-hot-toast";
 import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
-import { deactivateDriverCallable } from "@/utils/functions";
+import {
+  adminDeleteUserCallable,
+  deactivateDriverCallable,
+} from "@/utils/functions";
+import { formatFriendlyError } from "@/utils/friendlyError";
 
 interface EditRiderModalProps {
   open: boolean;
@@ -90,23 +94,26 @@ const EditRiderModal: React.FC<EditRiderModalProps> = ({
 
   const handleDeleteConfirm = async () => {
     try {
-      // Delete from RTDB
-      await deleteRider(rider.driverId);
-      
-      // Delete from Firestore drivers
-      await deleteDriver(rider.driverId);
-      
-      // Delete from Firestore users
-      if (rider.userId) {
-        await deleteUser(rider.userId);
+      const targetUserId = rider.userId || rider.driverId;
+
+      // Elimina cuenta de Firebase Auth + users + drivers + wallets + reactivationTokens
+      await adminDeleteUserCallable({ userId: targetUserId });
+
+      // Delete from RTDB (best-effort)
+      try {
+        await deleteRider(rider.driverId);
+      } catch (rtdbErr) {
+        console.warn("[EditRiderModal] RTDB cleanup note:", rtdbErr);
       }
-      
-      toast.success("Conductor y todos sus datos asociados fueron eliminados de las colecciones");
+
+      toast.success("Conductor y su cuenta de acceso fueron eliminados por completo");
       onUpdate();
       onClose();
     } catch (error) {
       console.error("Error deleting rider completely:", error);
-      toast.error("Ocurrió un error al eliminar los datos del conductor");
+      toast.error(
+        formatFriendlyError(error, "Ocurrió un error al eliminar los datos del conductor")
+      );
     }
   };
 

@@ -18,24 +18,31 @@ import {
 import Grid from '@mui/material/Grid';
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
-import { updateDriver, deleteDriver } from "@/utils/driver";
-import { getUser, deleteUser } from "@/utils/user";
+import { updateDriver } from "@/utils/driver";
+import { getUser } from "@/utils/user";
+import { deleteRider } from "@/utils/rider";
 import { Driver } from "./Riders";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
 import {
+  adminDeleteUserCallable,
+  approveCountryMembershipCallable,
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
+  reviewMembershipDocumentCallable,
   setDriverVerificationCallable,
 } from "@/utils/functions";
+import { formatFriendlyError } from "@/utils/friendlyError";
 import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { firebaseApp } from "@/utils/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { db, firebaseApp } from "@/utils/firebase";
 
 interface UserData {
   firstName?: string;
   lastName?: string;
   email?: string;
+  countryId?: string;
 }
 
 interface EditDriverModalProps {
@@ -154,14 +161,69 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     try {
       const isApproved = values.verificationStatus === "verified";
       const currentApproved = driver.verificationStatus === "verified";
+      const targetUserId = driver.userId || driver.uid;
+      const countryCode = String(
+        (driver as any)?.countryId || userData?.countryId || ""
+      )
+        .trim()
+        .toLowerCase();
 
-      // CF-37 / G18: Manejo de estado de verificación mediante callable del servidor sin llamadas redundantes a membresía
+      // CF-37: Manejo de estado de verificación mediante callable oficial
       if (isApproved !== currentApproved) {
         if (isApproved) {
           await setDriverVerificationCallable({
             driverId: driver.uid,
             verified: true,
           });
+
+          // Sincronizar membresía de país (CF-34 / CF-36) para emitir claim countryIds al conductor
+          if (countryCode) {
+            try {
+              const membershipSnap = await getDoc(
+                doc(db, "users", targetUserId, "countryMemberships", countryCode)
+              );
+              if (membershipSnap.exists()) {
+                const memData = membershipSnap.data() as {
+                  status?: string;
+                  documents?: Array<{ type?: string; status?: string }>;
+                };
+                if (memData.status !== "active") {
+                  const docs = Array.isArray(memData.documents) ? memData.documents : [];
+                  for (const item of docs) {
+                    if (
+                      item?.type &&
+                      item.status !== "accepted" &&
+                      item.status !== "approved"
+                    ) {
+                      try {
+                        await reviewMembershipDocumentCallable({
+                          userId: targetUserId,
+                          code: countryCode,
+                          type: item.type,
+                          decision: "accepted",
+                        });
+                      } catch (reviewErr) {
+                        console.warn(
+                          "[EditDriverModal] reviewMembershipDocument note:",
+                          item.type,
+                          reviewErr
+                        );
+                      }
+                    }
+                  }
+                  await approveCountryMembershipCallable({
+                    userId: targetUserId,
+                    code: countryCode,
+                  });
+                }
+              }
+            } catch (memErr) {
+              console.warn(
+                "[EditDriverModal] countryMembership sync note:",
+                memErr
+              );
+            }
+          }
         } else {
           await setDriverVerificationCallable({
             driverId: driver.uid,
@@ -186,26 +248,33 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
       onClose();
     } catch (error) {
       console.error("Error updating driver:", error);
-      toast.error("Ocurrió un error al guardar los cambios");
+      toast.error(
+        formatFriendlyError(error, "Ocurrió un error al guardar los cambios")
+      );
     }
   };
 
   const handleDeleteConfirm = async () => {
     try {
-      // Delete Firestore drivers doc
-      await deleteDriver(driver.uid);
+      const targetUserId = driver.userId || driver.uid;
+      // Elimina cuenta de Firebase Auth + users + drivers + wallets + reactivationTokens
+      await adminDeleteUserCallable({ userId: targetUserId });
 
-      // Delete Firestore users doc if present
-      if (driver.userId) {
-        await deleteUser(driver.userId);
+      // Limpieza best-effort en RTDB si estaba registrado en presencia activa
+      try {
+        await deleteRider(driver.uid);
+      } catch (rtdbErr) {
+        console.warn("[EditDriverModal] RTDB cleanup note:", rtdbErr);
       }
 
-      toast.success("Conductor y sus datos asociados fueron eliminados");
+      toast.success("Conductor y su cuenta de acceso fueron eliminados por completo");
       if (onUpdate) onUpdate();
       onClose();
     } catch (error) {
       console.error("Error deleting driver completely:", error);
-      toast.error("Ocurrió un error al eliminar el conductor");
+      toast.error(
+        formatFriendlyError(error, "Ocurrió un error al eliminar el conductor")
+      );
     }
   };
 
@@ -294,6 +363,9 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
                               Verificado el: {new Date(emailStatus.verifiedAt).toLocaleString()}
                             </Typography>
                           )}
+                          <Typography variant="caption" color="textSecondary">
+                            Este código solo confirma el correo inicial. Al activar «Marcar como Verificado», el sistema envía automáticamente el aviso de cuenta aprobada.
+                          </Typography>
                         </Box>
                       ) : (
                         <Typography variant="body2" color="textSecondary">No disponible</Typography>

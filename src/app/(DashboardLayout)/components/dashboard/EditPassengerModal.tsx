@@ -15,14 +15,16 @@ import {
 } from "@mui/material";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
-import { updateUser, deleteUser } from "@/utils/user";
+import { updateUser } from "@/utils/user";
 import { Passenger } from "../../(Pasajeros)/_components/ListPassengers";
 import toast from "react-hot-toast";
 import DeleteConfirmationDialog from "@/app/(DashboardLayout)/components/shared/DeleteConfirmationDialog";
 import {
+  adminDeleteUserCallable,
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
 } from "@/utils/functions";
+import { formatFriendlyError } from "@/utils/friendlyError";
 
 interface EditPassengerModalProps {
   open: boolean;
@@ -96,19 +98,24 @@ const EditPassengerModal: React.FC<EditPassengerModalProps> = ({
       onClose();
     } catch (error) {
       console.error("Error updating user:", error);
-      toast.error("Ocurrió un error al guardar los cambios");
+      toast.error(
+        formatFriendlyError(error, "Ocurrió un error al guardar los cambios")
+      );
     }
   };
 
   const handleDeleteConfirm = async () => {
     try {
-      await deleteUser(passenger.id);
-      toast.success("Pasajero y sus datos asociados fueron eliminados");
+      // Elimina cuenta de Firebase Auth + users + drivers + wallets + reactivationTokens
+      await adminDeleteUserCallable({ userId: passenger.id });
+      toast.success("Pasajero y su cuenta de acceso fueron eliminados por completo");
       onUpdate();
       onClose();
     } catch (error) {
       console.error("Error deleting user completely:", error);
-      toast.error("Ocurrió un error al eliminar el pasajero");
+      toast.error(
+        formatFriendlyError(error, "Ocurrió un error al eliminar el pasajero")
+      );
     }
   };
 

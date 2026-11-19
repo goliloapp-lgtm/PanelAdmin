@@ -159,6 +159,20 @@ export const requestAccountDeletionCodeCallable = httpsCallable<RequestAccountDe
   "requestAccountDeletionCode"
 );
 
+export interface AdminDeleteUserParams {
+  userId: string;
+}
+
+export interface AdminDeleteUserResponse {
+  success: boolean;
+  message: string;
+}
+
+export const adminDeleteUserCallable = httpsCallable<
+  AdminDeleteUserParams,
+  AdminDeleteUserResponse
+>(functions, "adminDeleteUser");
+
 export const confirmAccountDeletionCallable = httpsCallable<ConfirmAccountDeletionParams, ConfirmAccountDeletionResponse>(
   functions,
   "confirmAccountDeletion"

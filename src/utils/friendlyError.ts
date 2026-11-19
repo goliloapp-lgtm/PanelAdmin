@@ -259,6 +259,14 @@ export function formatFriendlyError(
   }
 
   if (
+    combined.includes("only a super-admin may verify") ||
+    combined.includes("only a super-admin may approve") ||
+    combined.includes("only a super-admin may review")
+  ) {
+    return "Esta acción requiere permisos de Super Administrador de plataforma. Tu cuenta tiene rol Admin de país pero no el permiso superAdmin necesario.";
+  }
+
+  if (
     combined.includes("permission-denied") ||
     combined.includes("insufficient permissions") ||
     combined.includes("[403]")
