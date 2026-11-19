@@ -30,13 +30,11 @@ import {
   approveCountryMembershipCallable,
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
-  reviewMembershipDocumentCallable,
   setDriverVerificationCallable,
 } from "@/utils/functions";
 import { formatFriendlyError } from "@/utils/friendlyError";
 import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { doc, getDoc } from "firebase/firestore";
-import { db, firebaseApp } from "@/utils/firebase";
+import { firebaseApp } from "@/utils/firebase";
 
 interface UserData {
   firstName?: string;
@@ -171,59 +169,24 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
       // CF-37: Manejo de estado de verificación mediante callable oficial
       if (isApproved !== currentApproved) {
         if (isApproved) {
+          // LA MEMBRESÍA VA PRIMERO, Y SUS DOCUMENTOS NO SE ACEPTAN ACÁ.
+          //
+          // El claim `countryIds` lo emite la membresía de país. Con el conductor
+          // aprobado primero, un fallo de la membresía lo dejaba verificado y sin
+          // claim: el estado inconsistente que esto cierra. Y aceptar los documentos
+          // en bloque marcaba `accepted` lo que nadie había mirado; ahora el operador
+          // los acepta uno por uno y, si falta alguno, el backend rechaza nombrando
+          // cuál — ese mensaje se muestra tal cual, sin tragarse el fallo.
+          if (countryCode) {
+            await approveCountryMembershipCallable({
+              userId: targetUserId,
+              code: countryCode,
+            });
+          }
           await setDriverVerificationCallable({
             driverId: driver.uid,
             verified: true,
           });
-
-          // Sincronizar membresía de país (CF-34 / CF-36) para emitir claim countryIds al conductor
-          if (countryCode) {
-            try {
-              const membershipSnap = await getDoc(
-                doc(db, "users", targetUserId, "countryMemberships", countryCode)
-              );
-              if (membershipSnap.exists()) {
-                const memData = membershipSnap.data() as {
-                  status?: string;
-                  documents?: Array<{ type?: string; status?: string }>;
-                };
-                if (memData.status !== "active") {
-                  const docs = Array.isArray(memData.documents) ? memData.documents : [];
-                  for (const item of docs) {
-                    if (
-                      item?.type &&
-                      item.status !== "accepted" &&
-                      item.status !== "approved"
-                    ) {
-                      try {
-                        await reviewMembershipDocumentCallable({
-                          userId: targetUserId,
-                          code: countryCode,
-                          type: item.type,
-                          decision: "accepted",
-                        });
-                      } catch (reviewErr) {
-                        console.warn(
-                          "[EditDriverModal] reviewMembershipDocument note:",
-                          item.type,
-                          reviewErr
-                        );
-                      }
-                    }
-                  }
-                  await approveCountryMembershipCallable({
-                    userId: targetUserId,
-                    code: countryCode,
-                  });
-                }
-              }
-            } catch (memErr) {
-              console.warn(
-                "[EditDriverModal] countryMembership sync note:",
-                memErr
-              );
-            }
-          }
         } else {
           await setDriverVerificationCallable({
             driverId: driver.uid,
