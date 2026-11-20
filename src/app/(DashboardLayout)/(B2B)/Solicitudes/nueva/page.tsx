@@ -96,6 +96,24 @@ const NuevaSolicitudB2BPage = () => {
 
   const [companyId, setCompanyId] = useState("");
   const [costCenterId, setCostCenterId] = useState("");
+
+  /**
+   * El resumen del saldo del centro elegido, para quien crea la solicitud.
+   *
+   * Con más de un centro de costo la elección es suya, y para elegir con criterio
+   * necesita ver lo que le queda: antes el número sólo aparecía cuando el backend
+   * ya había rechazado la reserva. `budgetLimit` ausente es «sin techo», no `0`.
+   */
+  const describeCostCentreBalance = (cc: CostCenter): string => {
+    const used = Number(cc.spent ?? 0) + Number(cc.reserved ?? 0);
+    const limit = typeof cc.budgetLimit === "number" ? cc.budgetLimit : null;
+    const money = (value: number): string =>
+      `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}`;
+    const usedText = `Consumido + reservado ${money(used)}`;
+    return limit === null
+      ? `Sin techo definido · ${usedText}`
+      : `Techo ${money(limit)} · ${usedText} · Disponible ${money(limit - used)}`;
+  };
   const [travellerId, setTravellerId] = useState("");
   const [requestedByName, setRequestedByName] = useState("Coordinador Logístico SV");
   const [passengerPhone, setPassengerPhone] = useState("+503 7890-1234");
@@ -692,7 +710,9 @@ const NuevaSolicitudB2BPage = () => {
                       helperText={
                         costCenters.length === 0
                           ? "Sin centros de costo registrados (se resolverá automáticamente en servidor)"
-                          : undefined
+                          : selectedCostCenter
+                          ? describeCostCentreBalance(selectedCostCenter)
+                          : "Elegí un centro de costo para ver su saldo"
                       }
                     >
                       {costCenters.length === 0 ? (
@@ -703,9 +723,18 @@ const NuevaSolicitudB2BPage = () => {
                             cc.budgetLimit === null || cc.budgetLimit === undefined
                               ? "SIN LÍMITE"
                               : `$${Number(cc.budgetLimit).toFixed(2)}/ciclo`;
+                          const used =
+                            Number(cc.spent ?? 0) + Number(cc.reserved ?? 0);
+                          const availableText =
+                            cc.budgetLimit === null || cc.budgetLimit === undefined
+                              ? ""
+                              : ` · Disponible: $${(
+                                  Number(cc.budgetLimit) - used
+                                ).toFixed(2)}`;
                           return (
                             <MenuItem key={cc.id} value={cc.id}>
-                              {cc.department || cc.code || "Depto"} — {cc.name} (Techo: {limitText})
+                              {cc.department || cc.code || "Depto"} — {cc.name} (Techo: {limitText}
+                              {availableText})
                             </MenuItem>
                           );
                         })
