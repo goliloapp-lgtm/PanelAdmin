@@ -381,6 +381,20 @@ const NuevaSolicitudB2BPage = () => {
   const selectedCostCenter = costCenters.find(
     (c) => c.id === costCenterId || (c as any).costCentreId === costCenterId
   );
+
+  // EL AVISO SE ADELANTA AL RECHAZO. El backend reserva contra el techo por
+  // `quote.totalAmount` (`createScheduledTrip.ts`, §5.13.5-ter), así que se compara ese
+  // número y no la tarifa base: si la reserva supera lo disponible, se ve antes de enviar.
+  const reservationAmount =
+    backendQuote?.totalAmount ?? backendQuote?.farePrice ?? 0;
+  const selectedAvailable =
+    selectedCostCenter && typeof selectedCostCenter.budgetLimit === "number"
+      ? selectedCostCenter.budgetLimit -
+        (Number(selectedCostCenter.spent ?? 0) +
+          Number(selectedCostCenter.reserved ?? 0))
+      : null;
+  const exceedsAvailable =
+    selectedAvailable !== null && reservationAmount > selectedAvailable;
   const selectedTraveller = travellers.find((t) => t.id === travellerId);
 
   const handleAddStop = () => {
@@ -711,7 +725,22 @@ const NuevaSolicitudB2BPage = () => {
                         costCenters.length === 0
                           ? "Sin centros de costo registrados (se resolverá automáticamente en servidor)"
                           : selectedCostCenter
-                          ? describeCostCentreBalance(selectedCostCenter)
+                          ? (
+                              <span
+                                style={
+                                  exceedsAvailable
+                                    ? { color: "#C62828", fontWeight: 600 }
+                                    : undefined
+                                }
+                              >
+                                {describeCostCentreBalance(selectedCostCenter)}
+                                {exceedsAvailable
+                                  ? ` — la reserva ($${reservationAmount.toFixed(
+                                      2
+                                    )}) supera lo disponible`
+                                  : ""}
+                              </span>
+                            )
                           : "Elegí un centro de costo para ver su saldo"
                       }
                     >
