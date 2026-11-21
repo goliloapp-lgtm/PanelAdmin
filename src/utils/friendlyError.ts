@@ -213,6 +213,27 @@ export function formatFriendlyError(
     return "No es posible cancelar este traslado porque ya se encuentra en curso o ya fue finalizado.";
   }
 
+  // 8b. Compuerta de documentos de membresía y verificación (CF-104 / CF-104.1)
+  if (combined.includes("has documents that are not accepted")) {
+    const unacceptedMatch = rawMessage.match(
+      /has documents that are not accepted:\s*([^.]+)\./i
+    );
+    const docsList = unacceptedMatch?.[1]?.trim();
+    return docsList
+      ? `No se puede aprobar al conductor mientras queden documentos sin aceptar: ${docsList}. Revisa y acepta cada documento uno por uno antes de verificar.`
+      : "No se puede aprobar al conductor mientras queden documentos sin aceptar. Revisa y acepta cada documento uno por uno.";
+  }
+
+  if (combined.includes("missing") && combined.includes("required document")) {
+    const missingMatch = rawMessage.match(
+      /missing\s+\d+\s+required document\(s\)\s+for\s+[^:]+:\s*([^.]+)\./i
+    );
+    const docsList = missingMatch?.[1]?.trim();
+    return docsList
+      ? `Faltan documentos obligatorios aceptados en la membresía del conductor: ${docsList}. Revisa y acepta cada documento antes de aprobar.`
+      : "Faltan documentos obligatorios aceptados en la membresía del conductor. Revisa y acepta cada documento antes de aprobar.";
+  }
+
   // 9. Conductor o vehículo no disponible
   if (
     combined.includes("vehicle") ||
@@ -222,8 +243,7 @@ export function formatFriendlyError(
     if (
       combined.includes("not available") ||
       combined.includes("already assigned") ||
-      combined.includes("eligible") ||
-      combined.includes("failed-precondition")
+      combined.includes("eligible")
     ) {
       return "El conductor o vehículo seleccionado no está disponible en este momento. Por favor elige otra unidad.";
     }
@@ -243,6 +263,17 @@ export function formatFriendlyError(
   }
 
   // 11. Permisos y Doble Validación
+  if (
+    combined.includes("countryids") ||
+    combined.includes("token declares none (countryids)")
+  ) {
+    return "Tu cuenta de administrador no tiene asignado ningún país de operación ('countryIds'). Solicita a un Super Administrador que configure tus países autorizados.";
+  }
+
+  if (combined.includes("does not operate in the country")) {
+    return "No tienes autorización para gestionar conductores o membresías fuera de tus países asignados en plataforma.";
+  }
+
   if (
     combined.includes("four eyes") ||
     combined.includes("different administrator must approve") ||

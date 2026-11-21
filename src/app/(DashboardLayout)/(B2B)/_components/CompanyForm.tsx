@@ -459,32 +459,42 @@ export const CompanyForm: React.FC<CompanyFormProps> = ({
                 )}
               </Grid>
             )}
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <Typography variant="caption">
-                Techo de Consumo Inicial ($ USD) — Vacío = SIN LÍMITE
-              </Typography>
-              <CustomTextField
-                fullWidth
-                type="number"
-                inputProps={{ step: "10", min: "0" }}
-                name="creditLimit"
-                placeholder="Vacío = SIN LÍMITE (ej. 1200)"
-                value={
-                  formik.values.creditLimit === null ||
-                  formik.values.creditLimit === undefined
-                    ? ""
-                    : formik.values.creditLimit
-                }
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  const val = e.target.value;
-                  formik.setFieldValue(
-                    "creditLimit",
-                    val.trim() === "" ? null : Number(val)
-                  );
-                }}
-                helperText="Define el techo inicial del Centro de Costo corporativo (CF-23)"
-              />
-            </Grid>
+            {!isEditing ? (
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <Typography variant="caption">
+                  Límite del Centro de Costo ($ USD) — Vacío = SIN LÍMITE
+                </Typography>
+                <CustomTextField
+                  fullWidth
+                  type="number"
+                  inputProps={{ step: "10", min: "1" }}
+                  name="creditLimit"
+                  placeholder="Vacío = SIN LÍMITE (ej. 1200)"
+                  value={
+                    formik.values.creditLimit === null ||
+                    formik.values.creditLimit === undefined
+                      ? ""
+                      : formik.values.creditLimit
+                  }
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const val = e.target.value;
+                    formik.setFieldValue(
+                      "creditLimit",
+                      val.trim() === "" ? null : Number(val)
+                    );
+                  }}
+                  helperText="Define el límite inicial del centro de costo de la empresa"
+                />
+              </Grid>
+            ) : (
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <Alert severity="info" sx={{ py: 0.75, mt: 1 }}>
+                  <Typography variant="caption">
+                    El límite presupuestario (`budgetLimit`) se modifica directamente desde la sección de <strong>Centros de Costo</strong> de la empresa.
+                  </Typography>
+                </Alert>
+              </Grid>
+            )}
             {retiredBiweekly?.constraint && (
               <Grid size={{ xs: 12 }}>
                 <Alert severity="info" sx={{ py: 0.5 }}>

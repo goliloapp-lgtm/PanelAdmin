@@ -121,12 +121,12 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
       return;
     }
 
-    // CF-23 / CF-81: null = SIN LÍMITE. Jamás usar Number(val) || 0.
+    // CF-23 / CF-81: null = SIN LÍMITE; cuando lleva valor debe ser entero positivo (> 0).
     let parsedLimit: number | null = null;
     if (!isUnlimited) {
       const numeric = Number(budgetLimitInput);
-      if (!Number.isFinite(numeric) || numeric < 0) {
-        toast.error("Ingresa un presupuesto válido o selecciona 'Sin límite'.");
+      if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric <= 0) {
+        toast.error("Ingresa un límite entero mayor a $0 USD o activa 'Sin límite'.");
         return;
       }
       parsedLimit = numeric;
@@ -222,6 +222,7 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
                   <TableCell>Cadencia</TableCell>
                   <TableCell align="right">Techo del Ciclo</TableCell>
                   <TableCell align="right">Gastado + Reservado</TableCell>
+                  <TableCell align="right">Disponible</TableCell>
                   <TableCell align="center">Estado</TableCell>
                   <TableCell align="right">Ajustar Techo</TableCell>
                 </TableRow>
@@ -233,6 +234,9 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
                   const spent = Number(cc.spent || 0);
                   const reserved = Number(cc.reserved || 0);
                   const committed = spent + reserved;
+                  const available = isNoLimit
+                    ? null
+                    : Number(cc.budgetLimit) - committed;
                   const percent =
                     !isNoLimit && Number(cc.budgetLimit) > 0
                       ? Math.min(
@@ -278,6 +282,21 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
                             color={percent > 85 ? "error" : "primary"}
                             sx={{ height: 6, borderRadius: 3, mt: 0.5 }}
                           />
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        {isNoLimit || available === null ? (
+                          <Typography variant="body2" fontWeight={700} color="info.main">
+                            SIN LÍMITE
+                          </Typography>
+                        ) : (
+                          <Typography
+                            variant="body2"
+                            fontWeight={700}
+                            color={available <= 0 ? "error.main" : "success.main"}
+                          >
+                            ${available.toFixed(2)} USD
+                          </Typography>
                         )}
                       </TableCell>
                       <TableCell align="center">
@@ -381,12 +400,13 @@ export const CostCenterManager: React.FC<CostCenterManagerProps> = ({
             {!isUnlimited && (
               <Grid size={{ xs: 12 }}>
                 <Typography variant="caption">
-                  Techo de Gasto por Ciclo ($ USD) * (0 bloquea despacho)
+                  Límite de Gasto por Ciclo ($ USD, entero mayor a 0) *
                 </Typography>
                 <CustomTextField
                   fullWidth
                   type="number"
-                  placeholder="2500.00"
+                  inputProps={{ min: 1, step: 1 }}
+                  placeholder="2500"
                   value={budgetLimitInput}
                   onChange={(e: any) => setBudgetLimitInput(e.target.value)}
                 />

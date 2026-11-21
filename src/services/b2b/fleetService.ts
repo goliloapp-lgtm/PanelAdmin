@@ -853,8 +853,8 @@ export const reviewDriverDocumentSV = async (params: {
   const allApproved = updatedDocuments.every((d) => d.status === "approved");
   const wasMembershipActive = membershipData?.status === "active";
 
-  // 3. CF-34: Si todos los documentos obligatorios del conductor están aceptados y no estaba activa, invocar `approveCountryMembership`
-  if ((allDriverDocsApproved || allApproved) && !wasMembershipActive) {
+  // 3. CF-34 / CF-104.1: Solo cuando todos los documentos estén aceptados y la membresía no estaba activa, invocar `approveCountryMembership`
+  if (allApproved && !wasMembershipActive) {
     try {
       const approveMembershipFn = httpsCallable<
         { userId: string; code: string },

@@ -99,10 +99,8 @@ const NuevaSolicitudB2BPage = () => {
 
   /**
    * El resumen del saldo del centro elegido, para quien crea la solicitud.
-   *
    * Con más de un centro de costo la elección es suya, y para elegir con criterio
-   * necesita ver lo que le queda: antes el número sólo aparecía cuando el backend
-   * ya había rechazado la reserva. `budgetLimit` ausente es «sin techo», no `0`.
+   * necesita ver lo que le queda: `budgetLimit` ausente es «sin techo», no `0`.
    */
   const describeCostCentreBalance = (cc: CostCenter): string => {
     const used = Number(cc.spent ?? 0) + Number(cc.reserved ?? 0);
@@ -718,7 +716,7 @@ const NuevaSolicitudB2BPage = () => {
                     <TextField
                       select
                       fullWidth
-                      label="Techo de Consumo / Centro de Costo *"
+                      label="Límite / Centro de Costo *"
                       value={costCenterId}
                       onChange={(e) => setCostCenterId(e.target.value)}
                       helperText={
@@ -748,27 +746,69 @@ const NuevaSolicitudB2BPage = () => {
                         <MenuItem value="">General Corporativo</MenuItem>
                       ) : (
                         costCenters.map((cc) => {
-                          const limitText =
-                            cc.budgetLimit === null || cc.budgetLimit === undefined
-                              ? "SIN LÍMITE"
-                              : `$${Number(cc.budgetLimit).toFixed(2)}/ciclo`;
-                          const used =
-                            Number(cc.spent ?? 0) + Number(cc.reserved ?? 0);
-                          const availableText =
-                            cc.budgetLimit === null || cc.budgetLimit === undefined
-                              ? ""
-                              : ` · Disponible: $${(
-                                  Number(cc.budgetLimit) - used
-                                ).toFixed(2)}`;
+                          const hasLimit =
+                            typeof cc.budgetLimit === "number" &&
+                            Number.isFinite(cc.budgetLimit);
+                          const spent = Number(cc.spent || 0);
+                          const reserved = Number(cc.reserved || 0);
+                          const used = spent + reserved;
+                          const available = hasLimit
+                            ? Number(cc.budgetLimit) - used
+                            : null;
+                          const limitText = hasLimit
+                            ? `Techo: $${Number(cc.budgetLimit).toFixed(2)} · Disponible: $${(available ?? 0).toFixed(2)}`
+                            : `SIN LÍMITE · Consumido + reservado: $${used.toFixed(2)}`;
                           return (
                             <MenuItem key={cc.id} value={cc.id}>
-                              {cc.department || cc.code || "Depto"} — {cc.name} (Techo: {limitText}
-                              {availableText})
+                              {cc.department || cc.code || "Depto"} — {cc.name} ({limitText})
                             </MenuItem>
                           );
                         })
                       )}
                     </TextField>
+                    {(() => {
+                      const selectedCC = costCenters.find((c) => c.id === costCenterId);
+                      if (!selectedCC) return null;
+                      const hasLimit =
+                        typeof selectedCC.budgetLimit === "number" &&
+                        Number.isFinite(selectedCC.budgetLimit);
+                      const spent = Number(selectedCC.spent || 0);
+                      const reserved = Number(selectedCC.reserved || 0);
+                      const available = hasLimit
+                        ? Number(selectedCC.budgetLimit) - spent - reserved
+                        : null;
+                      return (
+                        <Alert
+                          severity={
+                            hasLimit && (available ?? 0) <= 0
+                              ? "error"
+                              : exceedsAvailable
+                              ? "warning"
+                              : "info"
+                          }
+                          sx={{ mt: 1, py: 0.25 }}
+                        >
+                          <Typography variant="caption" component="div">
+                            <strong>
+                              Saldo disponible ({selectedCC.name}):{" "}
+                              {hasLimit
+                                ? `$${(available ?? 0).toFixed(2)} USD`
+                                : "Sin límite definido"}
+                            </strong>
+                            {" · "}
+                            {hasLimit
+                              ? `Techo: $${Number(selectedCC.budgetLimit).toFixed(2)}`
+                              : "Techo: SIN LÍMITE"}
+                            {` · Consumido: $${spent.toFixed(2)} · Reservado: $${reserved.toFixed(2)}`}
+                            {exceedsAvailable && (
+                              <div style={{ color: "#C62828", fontWeight: 700, marginTop: 2 }}>
+                                Atención: Esta reserva estimada ($${reservationAmount.toFixed(2)}) supera el saldo disponible.
+                              </div>
+                            )}
+                          </Typography>
+                        </Alert>
+                      );
+                    })()}
                   </Grid>
 
                   <Grid size={{ xs: 12, sm: 6 }}>

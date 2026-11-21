@@ -30,11 +30,30 @@ import {
   approveCountryMembershipCallable,
   getEmailVerificationStatusCallable,
   requestEmailVerificationCodeCallable,
+  reviewMembershipDocumentCallable,
   setDriverVerificationCallable,
 } from "@/utils/functions";
 import { formatFriendlyError } from "@/utils/friendlyError";
 import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
-import { firebaseApp } from "@/utils/firebase";
+import { doc, getDoc } from "firebase/firestore";
+import { db, firebaseApp } from "@/utils/firebase";
+
+interface MembershipDocEntry {
+  type: string;
+  status?: string;
+  name?: string;
+  fileUrl?: string;
+  url?: string;
+  rejectionReason?: string;
+}
+
+const DOC_TYPE_ALIASES: Record<string, string[]> = {
+  identityDocument: ["identityDocument", "svIdentityDocument", "identity_document"],
+  driversLicense: ["driversLicense", "svDriversLicense", "drivers_license"],
+  criminalRecord: ["criminalRecord", "svCriminalRecord", "criminal_record"],
+  insuranceCard: ["insuranceCard", "svInsuranceCard", "insurance_card"],
+  vehicleRegistration: ["vehicleRegistration", "svVehicleRegistration", "vehicle_registration"],
+};
 
 interface UserData {
   firstName?: string;
@@ -73,12 +92,48 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
   const [sendingVerification, setSendingVerification] = useState(false);
   const [isEditing, setIsEditing] = useState(!readOnly);
   const [uploadingField, setUploadingField] = useState<string | null>(null);
+  const [membershipDocs, setMembershipDocs] = useState<MembershipDocEntry[]>([]);
+  const [membershipStatus, setMembershipStatus] = useState<string>("");
+  const [reviewingDocType, setReviewingDocType] = useState<string | null>(null);
+
+  const resolvedCountryCode = String(
+    (driver as any)?.countryId || userData?.countryId || "sv"
+  )
+    .trim()
+    .toLowerCase();
+
+  const fetchMembershipData = async (uid: string, code: string) => {
+    if (!uid || !code) return;
+    try {
+      const snap = await getDoc(doc(db, "users", uid, "countryMemberships", code));
+      if (snap.exists()) {
+        const data = snap.data();
+        setMembershipStatus(typeof data.status === "string" ? data.status : "");
+        setMembershipDocs(Array.isArray(data.documents) ? data.documents : []);
+      } else {
+        setMembershipStatus("");
+        setMembershipDocs([]);
+      }
+    } catch (err) {
+      console.warn("[EditDriverModal] Error reading countryMembership:", err);
+    }
+  };
 
   useEffect(() => {
     if (open) {
       setIsEditing(!readOnly);
     }
   }, [open, readOnly]);
+
+  useEffect(() => {
+    if (open && driver) {
+      const targetUid = driver.userId || driver.uid;
+      fetchMembershipData(targetUid, resolvedCountryCode);
+    } else {
+      setMembershipDocs([]);
+      setMembershipStatus("");
+    }
+  }, [open, driver, resolvedCountryCode]);
 
   useEffect(() => {
     if (open && driver?.userId) {
@@ -155,6 +210,47 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
     }
   };
 
+  const findMembershipDoc = (canonicalType: string): MembershipDocEntry | undefined => {
+    const aliases = DOC_TYPE_ALIASES[canonicalType] || [canonicalType];
+    return membershipDocs.find((d) => d && typeof d.type === "string" && aliases.includes(d.type));
+  };
+
+  const handleReviewDocument = async (
+    canonicalType: string,
+    decision: "accepted" | "rejected"
+  ) => {
+    const targetUserId = driver.userId || driver.uid;
+    const countryCode = resolvedCountryCode || "sv";
+    const matched = findMembershipDoc(canonicalType);
+    const backendType = matched?.type || canonicalType;
+
+    setReviewingDocType(canonicalType);
+    try {
+      await reviewMembershipDocumentCallable({
+        userId: targetUserId,
+        code: countryCode,
+        type: backendType,
+        decision,
+        ...(decision === "rejected"
+          ? { rejectionReason: "Documento rechazado en revisión de panel" }
+          : {}),
+      });
+      toast.success(
+        decision === "accepted"
+          ? "Documento aceptado correctamente"
+          : "Documento marcado como rechazado"
+      );
+      await fetchMembershipData(targetUserId, countryCode);
+    } catch (error) {
+      console.error("[EditDriverModal] Error reviewing document:", error);
+      toast.error(
+        formatFriendlyError(error, "No se pudo actualizar el estado del documento")
+      );
+    } finally {
+      setReviewingDocType(null);
+    }
+  };
+
   const handleUpdate = async (values: Driver) => {
     try {
       const isApproved = values.verificationStatus === "verified";
@@ -178,10 +274,19 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
           // los acepta uno por uno y, si falta alguno, el backend rechaza nombrando
           // cuál — ese mensaje se muestra tal cual, sin tragarse el fallo.
           if (countryCode) {
-            await approveCountryMembershipCallable({
-              userId: targetUserId,
-              code: countryCode,
-            });
+            try {
+              await approveCountryMembershipCallable({
+                userId: targetUserId,
+                code: countryCode,
+              });
+            } catch (memErr: any) {
+              const msg = String(memErr?.message || "").toLowerCase();
+              // Si la membresía ya estaba activa ("already active"), continuamos a verificar;
+              // cualquier otro fallo (documentos sin aceptar, faltantes o permisos) se propaga.
+              if (!msg.includes("already active")) {
+                throw memErr;
+              }
+            }
           }
           await setDriverVerificationCallable({
             driverId: driver.uid,
@@ -338,50 +443,130 @@ const EditDriverModal: React.FC<EditDriverModalProps> = ({
 
                   <Divider sx={{ my: 2 }} />
 
-                  <Typography variant="h6" gutterBottom>
-                    Imágenes de Documentos
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                    <Typography variant="h6">
+                      Imágenes y Revisión de Documentos
+                    </Typography>
+                    {membershipStatus && (
+                      <Chip
+                        label={`Membresía (${resolvedCountryCode.toUpperCase()}): ${
+                          membershipStatus === "active"
+                            ? "Activa"
+                            : membershipStatus === "pending" || membershipStatus === "in_review"
+                            ? "En revisión"
+                            : membershipStatus
+                        }`}
+                        color={membershipStatus === "active" ? "success" : "warning"}
+                        size="small"
+                      />
+                    )}
+                  </Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ display: "block", mb: 1.5 }}>
+                    Para aprobar al conductor, revisa y acepta cada documento individualmente (CF-104).
                   </Typography>
                   <Grid container spacing={2}>
                     {[
-                      { src: values.profileImageUrl, label: "Perfil", field: "profileImageUrl" },
-                      { src: values.licenseImageUrl, label: "Licencia", field: "licenseImageUrl" },
-                      { src: values.criminalRecordImageUrl, label: "Antecedentes", field: "criminalRecordImageUrl" },
-                      { src: values.insuranceCardImageUrl, label: "Tarjeta de Seguro", field: "insuranceCardImageUrl" },
-                      { src: values.vehicleRegistrationImageUrl, label: "Registro de Vehículo", field: "vehicleRegistrationImageUrl" },
-                    ].map((img, index) => (
-                      <Grid size={{ xs: 6, sm: 4 }} key={index}>
-                        <Typography variant="caption" align="center" component="div">{img.label}</Typography>
-                        <Card sx={{ mb: 1 }}>
-                          <CardMedia
-                            component="img"
-                            image={img.src ?? ""}
-                            alt={img.label}
-                            sx={{ height: 100, objectFit: 'contain', cursor: img.src ? 'pointer' : 'default' }}
-                            onClick={() => img.src && window.open(img.src, '_blank')}
-                          />
-                        </Card>
-                        {isEditing && (
-                          <Box sx={{ display: "flex", justifyContent: "center" }}>
-                            <Button
-                              variant="outlined"
-                              component="label"
+                      { src: values.profileImageUrl, label: "DUI / Identidad", field: "profileImageUrl", docType: "identityDocument" },
+                      { src: values.licenseImageUrl, label: "Licencia", field: "licenseImageUrl", docType: "driversLicense" },
+                      { src: values.criminalRecordImageUrl, label: "Antecedentes (PNC)", field: "criminalRecordImageUrl", docType: "criminalRecord" },
+                      { src: values.insuranceCardImageUrl, label: "Tarjeta de Seguro", field: "insuranceCardImageUrl", docType: "insuranceCard" },
+                      { src: values.vehicleRegistrationImageUrl, label: "Tarjeta Circulación", field: "vehicleRegistrationImageUrl", docType: "vehicleRegistration" },
+                    ].map((img, index) => {
+                      const matchedDoc = findMembershipDoc(img.docType);
+                      const docStatus = matchedDoc?.status || "";
+                      const displaySrc = img.src || matchedDoc?.fileUrl || matchedDoc?.url || "";
+                      const isAccepted = docStatus === "accepted" || docStatus === "approved";
+                      const isRejected = docStatus === "rejected";
+                      const isReviewing = reviewingDocType === img.docType;
+
+                      return (
+                        <Grid size={{ xs: 6, sm: 4 }} key={index}>
+                          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", mb: 0.5, gap: 0.5 }}>
+                            <Typography variant="caption" align="center" fontWeight={600} component="div">
+                              {img.label}
+                            </Typography>
+                            <Chip
+                              label={
+                                isAccepted
+                                  ? "Aceptado"
+                                  : isRejected
+                                  ? "Rechazado"
+                                  : matchedDoc
+                                  ? "Pendiente"
+                                  : "Sin registro"
+                              }
+                              color={
+                                isAccepted
+                                  ? "success"
+                                  : isRejected
+                                  ? "error"
+                                  : matchedDoc
+                                  ? "warning"
+                                  : "default"
+                              }
+                              variant={matchedDoc ? "filled" : "outlined"}
                               size="small"
-                              disabled={uploadingField === img.field}
-                              startIcon={uploadingField === img.field ? <CircularProgress size={16} /> : null}
-                              fullWidth
-                            >
-                              {uploadingField === img.field ? "Subiendo..." : "Subir"}
-                              <input
-                                type="file"
-                                accept="image/*"
-                                hidden
-                                onChange={(e) => handleImageUpload(e, img.field, setFieldValue)}
-                              />
-                            </Button>
+                              sx={{ height: 20, fontSize: "0.68rem" }}
+                            />
                           </Box>
-                        )}
-                      </Grid>
-                    ))}
+                          <Card sx={{ mb: 1 }}>
+                            <CardMedia
+                              component="img"
+                              image={displaySrc}
+                              alt={img.label}
+                              sx={{ height: 100, objectFit: "contain", cursor: displaySrc ? "pointer" : "default" }}
+                              onClick={() => displaySrc && window.open(displaySrc, "_blank")}
+                            />
+                          </Card>
+                          {isEditing && !readOnly && matchedDoc && (
+                            <Box sx={{ display: "flex", gap: 0.5, mb: 0.75 }}>
+                              <Button
+                                variant={isAccepted ? "contained" : "outlined"}
+                                color="success"
+                                size="small"
+                                fullWidth
+                                disabled={isReviewing || isAccepted}
+                                onClick={() => handleReviewDocument(img.docType, "accepted")}
+                                sx={{ fontSize: "0.7rem", py: 0.25, minWidth: 0 }}
+                              >
+                                Aceptar
+                              </Button>
+                              <Button
+                                variant={isRejected ? "contained" : "outlined"}
+                                color="error"
+                                size="small"
+                                fullWidth
+                                disabled={isReviewing || isRejected}
+                                onClick={() => handleReviewDocument(img.docType, "rejected")}
+                                sx={{ fontSize: "0.7rem", py: 0.25, minWidth: 0 }}
+                              >
+                                Rechazar
+                              </Button>
+                            </Box>
+                          )}
+                          {isEditing && (
+                            <Box sx={{ display: "flex", justifyContent: "center" }}>
+                              <Button
+                                variant="outlined"
+                                component="label"
+                                size="small"
+                                disabled={uploadingField === img.field}
+                                startIcon={uploadingField === img.field ? <CircularProgress size={16} /> : null}
+                                fullWidth
+                              >
+                                {uploadingField === img.field ? "Subiendo..." : "Subir"}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  hidden
+                                  onChange={(e) => handleImageUpload(e, img.field, setFieldValue)}
+                                />
+                              </Button>
+                            </Box>
+                          )}
+                        </Grid>
+                      );
+                    })}
                   </Grid>
                 </Grid>
 
